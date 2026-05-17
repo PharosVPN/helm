@@ -1,0 +1,15 @@
+# Build output
+/helm
+/dist/
+
+# Runtime state — never committed (DESIGN §10)
+/state/
+*.db
+*.db-wal
+*.db-shm
+
+# Operator config written by `helm init`
+/helm.yaml
+
+# OS / editor cruft
+.DS_Store
