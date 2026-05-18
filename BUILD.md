@@ -64,6 +64,7 @@ and PKI **must** use these exact values:
 | Stripped client-metadata prefix (anti-spoofing) | `x-pharos-` |
 | Backend delegation cert `Organization` | `PharosVPN Relay` |
 | `helm` gRPC-leg leaf `CN` / backend SNI | `helm-grpc` |
+| Relay certificate | one Fleet-CA leaf, `ServerAuth` + `ClientAuth` EKU |
 
 ## Non-negotiables
 
