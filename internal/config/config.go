@@ -31,6 +31,19 @@ type Config struct {
 	Retention RetentionConfig `koanf:"retention" yaml:"retention"`
 	Reality   RealityConfig   `koanf:"reality" yaml:"reality"`
 	Fleet     FleetConfig     `koanf:"fleet" yaml:"fleet"`
+	Node      NodeConfig      `koanf:"node" yaml:"node"`
+}
+
+// NodeConfig holds defaults for SSH-based node onboarding (DESIGN §5). helm
+// reaches a node over SSH only to install and update the buoy agent.
+type NodeConfig struct {
+	// BuoyBinaryURL is the default download URL for the buoy agent, used by
+	// `helm nodes add` when no local binary is supplied.
+	BuoyBinaryURL string `koanf:"buoy_binary_url" yaml:"buoy_binary_url"`
+	// SSHUser is the default SSH user for reaching new nodes.
+	SSHUser string `koanf:"ssh_user" yaml:"ssh_user"`
+	// SSHPort is the default SSH port for reaching new nodes.
+	SSHPort int `koanf:"ssh_port" yaml:"ssh_port"`
 }
 
 // LogConfig controls diagnostic logging.

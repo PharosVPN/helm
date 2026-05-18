@@ -28,6 +28,8 @@ func common() Config {
 		Beacon:   BeaconConfig{Embedded: true},
 		Accounts: AccountsConfig{Sync: true},
 		Reality:  RealityConfig{DecoySite: "www.microsoft.com"},
+		// BuoyBinaryURL is left for the operator to point at a buoy release.
+		Node: NodeConfig{SSHUser: "root", SSHPort: 22},
 	}
 }
 

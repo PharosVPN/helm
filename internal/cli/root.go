@@ -18,7 +18,11 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newInitCmd())
+	root.AddCommand(
+		newInitCmd(),
+		newSSHKeyCmd(),
+		newNodesCmd(),
+	)
 	return root
 }
 

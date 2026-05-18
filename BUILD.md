@@ -21,10 +21,11 @@ The current `amnezia-travelvpn` repo (`/Users/khalefa/Projects/amnezia-travelvpn
 is a working single-controller version. Port forward, do not copy blindly:
 
 - **Keep:** SQLite + Goose migrations, YAML snapshot projections, JWT + Argon2id
-  auth, the GCP integration, the koanf config loader, the tfstate parser, the
-  AmneziaWG/XRay profile model, the embedded-SvelteKit pattern.
-- **Replace:** SSH-to-node control → outbound mTLS/gRPC to `buoy`. The whole
-  `internal/ssh` + shell-editing path is gone.
+  auth, the koanf config loader, the AmneziaWG/XRay profile model, the
+  embedded-SvelteKit pattern.
+- **Replace:** SSH-to-node *control* and shell config-editing → outbound
+  mTLS/gRPC to `buoy`. SSH is kept, but only as the agent install/update
+  channel — never for control.
 - **Add:** the CA/PKI, account system (users as auth principals), E2E profile
   encryption, live event streaming + WebSocket, optimistic concurrency, the
   embedded `beacon`, `.pharos` export.
@@ -34,7 +35,7 @@ is a working single-controller version. Port forward, do not copy blindly:
 | # | Milestone | Output |
 |---|---|---|
 | M1 | Skeleton | `cmd/helm`, config, SQLite + migrations, CA generation on first run, `helm init --personal/--enterprise` |
-| M2 | Fleet provisioning | `CloudProvider` interface + GCP impl; `helm nodes enroll` (bootstrap token issuance) |
+| M2 | Node onboarding | SSH agent install/update; `helm nodes add` — CSR signing, host-key pinning, `helm ssh-key` |
 | M3 | Control loop | gRPC client to `buoy`; push config, push/revoke peers; status/metrics |
 | M4 | Live plane | consume `buoy` event stream; WebSocket fan-out to admin browsers |
 | M5 | Admin UI | SvelteKit SPA, auth, fleet/users/peers/admins screens, optimistic concurrency (409 on stale write) |

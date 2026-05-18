@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 The PharosVPN Authors
+
+package fleet
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/PharosVPN/helm/internal/idgen"
+)
+
+// Node lifecycle states.
+const (
+	StatusPending      = "pending"      // record created, no VM yet
+	StatusProvisioning = "provisioning" // cloud VM being created
+	StatusEnrolling    = "enrolling"    // VM up, bootstrap token outstanding
+	StatusActive       = "active"       // enrolled, under helm's control
+	StatusStopped      = "stopped"      // VM stopped (pre-positioned idle node)
+	StatusUnreachable  = "unreachable"  // missed control-plane heartbeats
+	StatusError        = "error"        // provisioning or enrollment failed
+)
+
+// Node is one buoy in the fleet inventory (the `nodes` table).
+type Node struct {
+	ID          string
+	Name        string
+	Region      string
+	PublicIP    string
+	ControlAddr string
+	CloudID     string
+	// SSHHost, SSHUser, SSHPort are how helm reaches the node to install and
+	// update the buoy agent (DESIGN §5). SSH is a deployment channel only.
+	SSHHost string
+	SSHUser string
+	SSHPort int
+	// SSHHostKey pins the node's SSH host key, captured on first connect.
+	SSHHostKey string
+	// AgentVersion is the buoy build last deployed to the node.
+	AgentVersion string
+	Status       string
+	Version      int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+const nodeColumns = `id, name, region, public_ip, control_addr, cloud_id,
+	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version,
+	status, version, created_at, updated_at`
+
+// CreateNode inserts a new node. ID and Status are filled in if empty, SSHPort
+// defaults to 22, and Version is set to 1. The stored Node is returned.
+func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
+	if n.ID == "" {
+		n.ID = idgen.New("nod")
+	}
+	if n.Status == "" {
+		n.Status = StatusPending
+	}
+	if n.SSHPort == 0 {
+		n.SSHPort = 22
+	}
+	now := time.Now().UTC()
+	n.Version = 1
+	n.CreatedAt, n.UpdatedAt = now, now
+
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO nodes (`+nodeColumns+`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
+		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
+	if err != nil {
+		return Node{}, fmt.Errorf("create node: %w", err)
+	}
+	return n, nil
+}
+
+// GetNode returns the node with the given ID, or ErrNotFound.
+func GetNode(ctx context.Context, db *sql.DB, id string) (Node, error) {
+	row := db.QueryRowContext(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = ?`, id)
+	n, err := scanNode(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Node{}, ErrNotFound
+	}
+	return n, err
+}
+
+// ListNodes returns every node, oldest first.
+func ListNodes(ctx context.Context, db *sql.DB) ([]Node, error) {
+	rows, err := db.QueryContext(ctx, `SELECT `+nodeColumns+` FROM nodes ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// UpdateNode writes n back, enforcing optimistic concurrency: the update
+// succeeds only if n.Version matches the stored row. On success the version is
+// bumped and the refreshed Node returned. A stale version yields
+// ErrStaleVersion; a missing row yields ErrNotFound.
+func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
+	now := time.Now().UTC()
+	res, err := db.ExecContext(ctx,
+		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, control_addr = ?,
+		        cloud_id = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?,
+		        ssh_host_key = ?, agent_version = ?, status = ?,
+		        version = version + 1, updated_at = ?
+		 WHERE id = ? AND version = ?`,
+		n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
+		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.Status, now, n.ID, n.Version)
+	if err != nil {
+		return Node{}, fmt.Errorf("update node: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return Node{}, err
+	}
+	if affected == 0 {
+		// No row matched id+version: distinguish "gone" from "stale".
+		if _, gErr := GetNode(ctx, db, n.ID); errors.Is(gErr, ErrNotFound) {
+			return Node{}, ErrNotFound
+		}
+		return Node{}, ErrStaleVersion
+	}
+	n.Version++
+	n.UpdatedAt = now
+	return n, nil
+}
+
+// DeleteNode removes a node. A missing row yields ErrNotFound.
+func DeleteNode(ctx context.Context, db *sql.DB, id string) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete node: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func scanNode(s rowScanner) (Node, error) {
+	var n Node
+	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &n.ControlAddr,
+		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
+		&n.AgentVersion, &n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return Node{}, err
+	}
+	return n, nil
+}
