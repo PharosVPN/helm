@@ -68,3 +68,15 @@ func (c *Client) RestartService(ctx context.Context, protocol buoyv1.Protocol) (
 func (c *Client) WatchEvents(ctx context.Context) (grpc.ServerStreamingClient[buoyv1.Event], error) {
 	return c.rpc.WatchEvents(ctx, &buoyv1.WatchEventsRequest{})
 }
+
+// SetNetworkConfig applies the node's forwarding / masquerade / isolation
+// policy (DESIGN §3, decision 16).
+func (c *Client) SetNetworkConfig(ctx context.Context, forwarding, masquerade, isolation bool) (*buoyv1.SetNetworkConfigResponse, error) {
+	return c.rpc.SetNetworkConfig(ctx, &buoyv1.SetNetworkConfigRequest{
+		Config: &buoyv1.NetworkConfig{
+			Forwarding: forwarding,
+			Masquerade: masquerade,
+			Isolation:  isolation,
+		},
+	})
+}

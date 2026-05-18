@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PharosVPN/helm/internal/fleet"
+	"github.com/PharosVPN/helm/internal/netpolicy"
 )
 
 // nodeView is the API representation of a fleet node.
@@ -21,6 +22,9 @@ type nodeView struct {
 	SSHHost      string    `json:"ssh_host"`
 	ControlAddr  string    `json:"control_addr"`
 	AgentVersion string    `json:"agent_version"`
+	Forwarding   bool      `json:"forwarding"`
+	Masquerade   bool      `json:"masquerade"`
+	Isolation    bool      `json:"isolation"`
 	Version      int       `json:"version"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -36,6 +40,9 @@ func toNodeView(n fleet.Node) nodeView {
 		SSHHost:      n.SSHHost,
 		ControlAddr:  n.ControlAddr,
 		AgentVersion: n.AgentVersion,
+		Forwarding:   n.Forwarding,
+		Masquerade:   n.Masquerade,
+		Isolation:    n.Isolation,
 		Version:      n.Version,
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
@@ -68,12 +75,16 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toNodeView(n))
 }
 
-// handleUpdateNode renames a node under optimistic concurrency: the request
-// must carry the version the admin loaded. A stale version yields 409.
+// handleUpdateNode updates a node's name and network policy under optimistic
+// concurrency: the request must carry the version the admin loaded. A stale
+// version yields 409.
 func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Version int    `json:"version"`
-		Name    string `json:"name"`
+		Version    int    `json:"version"`
+		Name       string `json:"name"`
+		Forwarding bool   `json:"forwarding"`
+		Masquerade bool   `json:"masquerade"`
+		Isolation  bool   `json:"isolation"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -81,6 +92,15 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	policy := netpolicy.Policy{
+		Forwarding: req.Forwarding,
+		Masquerade: req.Masquerade,
+		Isolation:  req.Isolation,
+	}
+	if err := policy.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -95,6 +115,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node.Name = req.Name
+	node.Forwarding = req.Forwarding
+	node.Masquerade = req.Masquerade
+	node.Isolation = req.Isolation
 	node.Version = req.Version // the version the admin loaded
 	updated, err := fleet.UpdateNode(r.Context(), s.db, node)
 	if errors.Is(err, fleet.ErrStaleVersion) {

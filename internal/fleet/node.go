@@ -41,18 +41,26 @@ type Node struct {
 	SSHHostKey string
 	// AgentVersion is the buoy build last deployed to the node.
 	AgentVersion string
-	Status       string
-	Version      int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Forwarding, Masquerade, Isolation are the node's network policy
+	// (DESIGN §3, decision 16), set per node from the admin UI.
+	Forwarding bool
+	Masquerade bool
+	Isolation  bool
+	Status     string
+	Version    int
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 const nodeColumns = `id, name, region, public_ip, control_addr, cloud_id,
 	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version,
+	forwarding, masquerade, isolation,
 	status, version, created_at, updated_at`
 
 // CreateNode inserts a new node. ID and Status are filled in if empty, SSHPort
-// defaults to 22, and Version is set to 1. The stored Node is returned.
+// defaults to 22, Version is set to 1, and the network policy starts at the
+// standard internet-egress posture (forwarding + masquerade on). The stored
+// Node is returned.
 func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 	if n.ID == "" {
 		n.ID = idgen.New("nod")
@@ -63,15 +71,18 @@ func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 	if n.SSHPort == 0 {
 		n.SSHPort = 22
 	}
+	// Network policy is configured after onboarding, via UpdateNode.
+	n.Forwarding, n.Masquerade, n.Isolation = true, true, false
 	now := time.Now().UTC()
 	n.Version = 1
 	n.CreatedAt, n.UpdatedAt = now, now
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO nodes (`+nodeColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		return Node{}, fmt.Errorf("create node: %w", err)
@@ -117,11 +128,13 @@ func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 	res, err := db.ExecContext(ctx,
 		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, control_addr = ?,
 		        cloud_id = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?,
-		        ssh_host_key = ?, agent_version = ?, status = ?,
+		        ssh_host_key = ?, agent_version = ?,
+		        forwarding = ?, masquerade = ?, isolation = ?, status = ?,
 		        version = version + 1, updated_at = ?
 		 WHERE id = ? AND version = ?`,
 		n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, now, n.ID, n.Version)
 	if err != nil {
 		return Node{}, fmt.Errorf("update node: %w", err)
@@ -162,7 +175,8 @@ func scanNode(s rowScanner) (Node, error) {
 	var n Node
 	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &n.ControlAddr,
 		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
-		&n.AgentVersion, &n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+		&n.AgentVersion, &n.Forwarding, &n.Masquerade, &n.Isolation,
+		&n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Node{}, err
 	}
