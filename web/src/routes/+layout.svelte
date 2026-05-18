@@ -18,6 +18,7 @@
 
 	const nav = [
 		{ href: '/', label: 'Fleet' },
+		{ href: '/users', label: 'Users' },
 		{ href: '/admins', label: 'Admins' }
 	];
 

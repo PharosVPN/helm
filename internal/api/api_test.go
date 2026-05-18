@@ -167,6 +167,41 @@ func TestAdminsLifecycle(t *testing.T) {
 	}
 }
 
+func TestUsersLifecycle(t *testing.T) {
+	ts, client, _ := setup(t)
+	login(t, ts, client)
+
+	resp, err := client.Post(ts.URL+"/api/users", "application/json",
+		strings.NewReader(`{"email":"user@example.com","password":"longenough"}`))
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	var created userView
+	json.NewDecoder(resp.Body).Decode(&created) //nolint:errcheck
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create user: status %d", resp.StatusCode)
+	}
+	if created.Role != account.RoleUser {
+		t.Errorf("role: got %q want user", created.Role)
+	}
+
+	listResp, err := client.Get(ts.URL + "/api/users")
+	if err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	var users []userView
+	json.NewDecoder(listResp.Body).Decode(&users) //nolint:errcheck
+	listResp.Body.Close()
+	if len(users) != 1 {
+		t.Fatalf("users: got %d want 1", len(users))
+	}
+
+	if code := deleteReq(t, client, ts.URL+"/api/users/"+created.ID); code != http.StatusNoContent {
+		t.Errorf("delete user: status %d want 204", code)
+	}
+}
+
 func patchNode(t *testing.T, client *http.Client, ts *httptest.Server, id string, version int, name string) int {
 	t.Helper()
 	body := `{"version":` + strconv.Itoa(version) + `,"name":"` + name + `"}`

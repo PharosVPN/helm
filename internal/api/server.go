@@ -54,6 +54,11 @@ func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
 	mux.HandleFunc("POST /api/admins", s.requireAuth(s.handleCreateAdmin))
 	mux.HandleFunc("DELETE /api/admins/{id}", s.requireAuth(s.handleDeleteAdmin))
 
+	// End-user accounts.
+	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
+	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))
+	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
+
 	// Live events — auth-gated (closes the M4 gap).
 	mux.HandleFunc("GET /ws/events", s.requireAuth(s.handleEvents))
 
