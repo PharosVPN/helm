@@ -6,9 +6,11 @@ lint:
     - STANDARD
   except:
     # Kept in sync with docs/proto/buf.yaml — PeerResponse is shared by
-    # AddPeer/RemovePeer and Event is the WatchEvents stream message.
+    # AddPeer/RemovePeer, Event is the WatchEvents stream message, and
+    # NodeControl deliberately omits the "Service" suffix.
     - RPC_REQUEST_RESPONSE_UNIQUE
     - RPC_RESPONSE_STANDARD_NAME
+    - SERVICE_SUFFIX
 breaking:
   use:
     - FILE
