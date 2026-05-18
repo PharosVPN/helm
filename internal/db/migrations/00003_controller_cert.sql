@@ -1,0 +1,21 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 The PharosVPN Authors
+--
+-- helm's own controller client certificate (DESIGN §4). helm presents this
+-- when it dials a buoy node's mTLS control port. Unlike user/node keys, this
+-- private key legitimately belongs to helm.
+
+-- +goose Up
+
+CREATE TABLE controller_cert (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    cert_pem   TEXT NOT NULL,
+    key_pem    TEXT NOT NULL,
+    serial     TEXT NOT NULL,
+    not_after  TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- +goose Down
+
+DROP TABLE controller_cert;

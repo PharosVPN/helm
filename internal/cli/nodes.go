@@ -4,9 +4,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/PharosVPN/helm/internal/config"
 	"github.com/PharosVPN/helm/internal/deploy"
@@ -14,6 +17,9 @@ import (
 	"github.com/PharosVPN/helm/internal/pki"
 	"github.com/spf13/cobra"
 )
+
+// controlRPCTimeout bounds a single control-plane RPC.
+const controlRPCTimeout = 10 * time.Second
 
 func newNodesCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -23,11 +29,71 @@ func newNodesCmd() *cobra.Command {
 	cmd.AddCommand(
 		newNodesAddCmd(),
 		newNodesListCmd(),
+		newNodesStatusCmd(),
 		newNodesUpdateCmd(),
 		newNodesStartCmd(),
 		newNodesStopCmd(),
 		newNodesRemoveCmd(),
 	)
+	return cmd
+}
+
+func newNodesStatusCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "status <node-id>",
+		Short: "Query a node's live status over the gRPC control plane",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, conn, err := openState(cfgPath)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			node, err := fleet.GetNode(ctx, conn, args[0])
+			if err != nil {
+				return err
+			}
+			if node.ControlAddr == "" {
+				return fmt.Errorf("node %s has no control address", node.ID)
+			}
+
+			dialer, err := newControlDialer(ctx, conn)
+			if err != nil {
+				return err
+			}
+			client, err := dialer.Dial(node.ControlAddr)
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			rpcCtx, cancel := context.WithTimeout(ctx, controlRPCTimeout)
+			defer cancel()
+			status, err := client.Status(rpcCtx)
+			if err != nil {
+				return fmt.Errorf("control %s: %w", node.ControlAddr, err)
+			}
+
+			fmt.Printf("node %s — live status\n", node.Name)
+			fmt.Printf("  agent version %s\n", dash(status.GetAgentVersion()))
+			fmt.Printf("  uptime        %ds\n", status.GetUptimeSeconds())
+			if len(status.GetServices()) == 0 {
+				fmt.Println("  services      (none reported)")
+				return nil
+			}
+			fmt.Println("  services:")
+			for _, svc := range status.GetServices() {
+				proto := strings.TrimPrefix(svc.GetProtocol().String(), "PROTOCOL_")
+				fmt.Printf("    %-14s running=%t listening=%t peers=%d\n",
+					proto, svc.GetRunning(), svc.GetListening(), svc.GetPeerCount())
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
 	return cmd
 }
 

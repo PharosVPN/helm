@@ -26,9 +26,9 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 
 	want := []string{
-		"admins", "audit_log", "bootstrap_tokens", "ca", "device_certs",
-		"devices", "metrics_samples", "node_certs", "nodes", "peers",
-		"profiles", "relays", "sessions", "ssh_identity", "users",
+		"admins", "audit_log", "bootstrap_tokens", "ca", "controller_cert",
+		"device_certs", "devices", "metrics_samples", "node_certs", "nodes",
+		"peers", "profiles", "relays", "sessions", "ssh_identity", "users",
 	}
 	rows, err := conn.Query(
 		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'goose_%' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
