@@ -32,6 +32,16 @@ type Config struct {
 	Reality   RealityConfig   `koanf:"reality" yaml:"reality"`
 	Fleet     FleetConfig     `koanf:"fleet" yaml:"fleet"`
 	Node      NodeConfig      `koanf:"node" yaml:"node"`
+	Admin     AdminConfig     `koanf:"admin" yaml:"admin"`
+}
+
+// AdminConfig holds the fixed controller-admin account (DESIGN §8). The
+// password here is the source of truth — helm re-syncs it into the database
+// on every start, so editing it and restarting changes the admin login.
+type AdminConfig struct {
+	// Password is the fixed admin's login password. `helm init` generates a
+	// strong random value; the operator may replace it and restart.
+	Password string `koanf:"password" yaml:"password"`
 }
 
 // NodeConfig holds defaults for SSH-based node onboarding (DESIGN §5). helm

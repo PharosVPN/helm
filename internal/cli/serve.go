@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/PharosVPN/helm/internal/api"
+	"github.com/PharosVPN/helm/internal/auth"
 	"github.com/PharosVPN/helm/internal/config"
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/live"
@@ -17,10 +19,11 @@ func newServeCmd() *cobra.Command {
 	var cfgPath string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the live plane and localhost admin server",
-		Long: "Run helm's live plane (DESIGN §7): hold a WatchEvents stream\n" +
-			"open to every enrolled node and fan events out to admin browsers\n" +
-			"over a localhost WebSocket. Runs until interrupted.",
+		Short: "Run the admin server and live plane",
+		Long: "Run helm's admin server: the localhost JSON API and admin UI,\n" +
+			"plus the live plane (DESIGN §7) — a WatchEvents stream held open\n" +
+			"to every enrolled node, fanned out to admin browsers over a\n" +
+			"WebSocket. Runs until interrupted.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -29,6 +32,11 @@ func newServeCmd() *cobra.Command {
 				return err
 			}
 			defer conn.Close()
+
+			// The config password is the source of truth for the fixed admin.
+			if err := auth.SyncConfigAdmin(ctx, conn, cfg.Admin.Password); err != nil {
+				return err
+			}
 
 			dialer, err := newControlDialer(ctx, conn)
 			if err != nil {
@@ -54,8 +62,9 @@ func newServeCmd() *cobra.Command {
 				}(n)
 			}
 
-			srv := live.NewServer(cfg.UI.Listen, hub)
-			fmt.Printf("helm live plane — http://%s, watching %d node(s)\n", cfg.UI.Listen, watched)
+			srv := api.NewServer(cfg.UI.Listen, conn, hub)
+			fmt.Printf("helm admin server — http://%s, watching %d node(s)\n", cfg.UI.Listen, watched)
+			fmt.Printf("  api:     http://%s/api\n", cfg.UI.Listen)
 			fmt.Printf("  events:  ws://%s/ws/events\n", cfg.UI.Listen)
 
 			err = srv.Run(ctx)

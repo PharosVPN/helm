@@ -2,8 +2,8 @@
 // Copyright (C) 2026 The PharosVPN Authors
 
 // Package live is helm's live plane (DESIGN §7): it holds each buoy node's
-// WatchEvents stream open and fans events out to admin browsers over a
-// localhost WebSocket.
+// WatchEvents stream open and fans events out through a Hub to subscribers.
+// The admin WebSocket that serves browsers from the Hub lives in package api.
 package live
 
 import (
