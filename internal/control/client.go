@@ -62,3 +62,9 @@ func (c *Client) ListPeers(ctx context.Context, protocol buoyv1.Protocol) (*buoy
 func (c *Client) RestartService(ctx context.Context, protocol buoyv1.Protocol) (*buoyv1.RestartServiceResponse, error) {
 	return c.rpc.RestartService(ctx, &buoyv1.RestartServiceRequest{Protocol: protocol})
 }
+
+// WatchEvents opens the node's live event server-stream. The caller reads
+// events with Recv until ctx is cancelled or the stream ends.
+func (c *Client) WatchEvents(ctx context.Context) (grpc.ServerStreamingClient[buoyv1.Event], error) {
+	return c.rpc.WatchEvents(ctx, &buoyv1.WatchEventsRequest{})
+}
