@@ -6,11 +6,14 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 
 	"github.com/PharosVPN/helm/internal/config"
+	"github.com/PharosVPN/helm/internal/control"
 	"github.com/PharosVPN/helm/internal/db"
 	"github.com/PharosVPN/helm/internal/fleet"
+	"github.com/PharosVPN/helm/internal/pki"
 	"github.com/PharosVPN/helm/internal/ssh"
 )
 
@@ -58,4 +61,21 @@ func dialNode(ctx context.Context, conn *sql.DB, node fleet.Node) (*ssh.Conn, er
 		Signer:       id.Signer,
 		KnownHostKey: node.SSHHostKey,
 	})
+}
+
+// newControlDialer builds the mTLS gRPC dialer for the buoy control plane,
+// ensuring helm's CA and controller certificate exist.
+func newControlDialer(ctx context.Context, conn *sql.DB) (*control.Dialer, error) {
+	bundle, _, err := pki.EnsureCA(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("load CA: %w", err)
+	}
+	cc, _, err := pki.EnsureControllerCert(ctx, conn, bundle.Fleet)
+	if err != nil {
+		return nil, fmt.Errorf("controller cert: %w", err)
+	}
+	chain := make([]byte, 0, len(cc.CertPEM)+len(bundle.Fleet.CertPEM))
+	chain = append(chain, cc.CertPEM...)
+	chain = append(chain, bundle.Fleet.CertPEM...)
+	return control.NewDialer(chain, cc.KeyPEM, bundle.Root.CertPEM)
 }
