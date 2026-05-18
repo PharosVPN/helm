@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 The PharosVPN Authors
+
+package deploy_test
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"database/sql"
+	"encoding/pem"
+	"io/fs"
+	"path/filepath"
+	"testing"
+
+	"github.com/PharosVPN/helm/internal/db"
+	"github.com/PharosVPN/helm/internal/deploy"
+	"github.com/PharosVPN/helm/internal/fleet"
+	"github.com/PharosVPN/helm/internal/pki"
+)
+
+// fakeRemote stands in for an SSH connection to a node.
+type fakeRemote struct {
+	csrPEM   []byte
+	hostKey  string
+	uploads  map[string][]byte
+	commands []string
+}
+
+func newFakeRemote(t *testing.T) *fakeRemote {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("node key: %v", err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader,
+		&x509.CertificateRequest{Subject: pkix.Name{CommonName: "buoy"}}, key)
+	if err != nil {
+		t.Fatalf("node CSR: %v", err)
+	}
+	return &fakeRemote{
+		csrPEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}),
+		hostKey: "ssh-ed25519 AAAAC3Nzdummyhostkey node",
+		uploads: map[string][]byte{},
+	}
+}
+
+func (f *fakeRemote) Run(_ context.Context, cmd string, _ []byte) ([]byte, error) {
+	f.commands = append(f.commands, cmd)
+	switch cmd {
+	case "/usr/local/bin/buoy gen-csr":
+		return f.csrPEM, nil
+	case "/usr/local/bin/buoy version":
+		return []byte("buoy 0.1.0-test\n"), nil
+	default:
+		return nil, nil
+	}
+}
+
+func (f *fakeRemote) Upload(_ context.Context, path string, data []byte, _ fs.FileMode) error {
+	f.uploads[path] = data
+	return nil
+}
+
+func (f *fakeRemote) HostKey() string { return f.hostKey }
+func (f *fakeRemote) Close() error    { return nil }
+
+func newDB(t *testing.T) *sql.DB {
+	t.Helper()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := db.Migrate(conn); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	return conn
+}
+
+func TestAddNode(t *testing.T) {
+	ctx := context.Background()
+	conn := newDB(t)
+	bundle, _, err := pki.EnsureCA(ctx, conn)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	remote := newFakeRemote(t)
+
+	res, err := deploy.AddNode(ctx, conn, remote, bundle, deploy.AddParams{
+		Region:  "ams",
+		SSHHost: "203.0.113.10",
+		SSHUser: "root",
+		Install: deploy.InstallSpec{URL: "https://dl.example/buoy"},
+	})
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	if res.Node.Status != fleet.StatusActive {
+		t.Errorf("status: got %q want %q", res.Node.Status, fleet.StatusActive)
+	}
+	if res.Node.SSHHostKey != remote.hostKey {
+		t.Errorf("host key not pinned: got %q", res.Node.SSHHostKey)
+	}
+	if res.NodeCertID == "" {
+		t.Error("no node cert recorded")
+	}
+	if res.AgentVersion != "buoy 0.1.0-test" {
+		t.Errorf("agent version: got %q", res.AgentVersion)
+	}
+	for _, want := range []string{
+		"/etc/buoy/node.crt", "/etc/buoy/ca.crt", "/etc/systemd/system/buoy.service",
+	} {
+		if _, ok := remote.uploads[want]; !ok {
+			t.Errorf("expected upload of %s", want)
+		}
+	}
+
+	// The signed cert really chains to the CA.
+	got, err := fleet.GetNode(ctx, conn, res.Node.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.ControlAddr != "203.0.113.10:8444" {
+		t.Errorf("control addr: got %q", got.ControlAddr)
+	}
+}
+
+func TestAddNodeUploadsBinary(t *testing.T) {
+	ctx := context.Background()
+	conn := newDB(t)
+	bundle, _, err := pki.EnsureCA(ctx, conn)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	remote := newFakeRemote(t)
+
+	binary := []byte("\x7fELF fake buoy binary")
+	if _, err := deploy.AddNode(ctx, conn, remote, bundle, deploy.AddParams{
+		Region:  "fra",
+		SSHHost: "node.example.com",
+		Install: deploy.InstallSpec{Binary: binary},
+	}); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if got := remote.uploads["/usr/local/bin/buoy"]; string(got) != string(binary) {
+		t.Error("buoy binary was not uploaded")
+	}
+}
+
+func TestInstallSpecValidation(t *testing.T) {
+	ctx := context.Background()
+	conn := newDB(t)
+	bundle, _, err := pki.EnsureCA(ctx, conn)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+
+	for name, spec := range map[string]deploy.InstallSpec{
+		"neither": {},
+		"both":    {Binary: []byte("x"), URL: "https://example/buoy"},
+	} {
+		_, err := deploy.AddNode(ctx, conn, newFakeRemote(t), bundle, deploy.AddParams{
+			Region: "ams", SSHHost: "203.0.113.1", Install: spec,
+		})
+		if err == nil {
+			t.Errorf("%s install spec: expected error", name)
+		}
+	}
+}
+
+func TestServiceUnknownAction(t *testing.T) {
+	if err := deploy.Service(context.Background(), newFakeRemote(t), "bounce"); err == nil {
+		t.Error("expected error for unknown service action")
+	}
+}

@@ -26,7 +26,7 @@ full architecture.
 ## Stack
 
 Go · SQLite (Goose migrations) · gRPC over mTLS · embedded SvelteKit 2 / Svelte 5
-admin UI · `CloudProvider` interface (GCP first).
+admin UI · SSH-based `buoy` agent onboarding.
 
 ## Status
 

@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 The PharosVPN Authors
+
+package fleet_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/PharosVPN/helm/internal/fleet"
+)
+
+func TestNodeCRUD(t *testing.T) {
+	conn := newDB(t)
+	ctx := context.Background()
+
+	created, err := fleet.CreateNode(ctx, conn, fleet.Node{Name: "ams-1", Region: "europe-west4"})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if created.ID == "" || created.Version != 1 {
+		t.Fatalf("CreateNode: bad defaults %+v", created)
+	}
+	if created.Status != fleet.StatusPending {
+		t.Errorf("status: got %q want %q", created.Status, fleet.StatusPending)
+	}
+
+	got, err := fleet.GetNode(ctx, conn, created.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Name != "ams-1" || got.Region != "europe-west4" {
+		t.Errorf("GetNode: got %+v", got)
+	}
+
+	list, err := fleet.ListNodes(ctx, conn)
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("ListNodes: got %d want 1", len(list))
+	}
+
+	if err := fleet.DeleteNode(ctx, conn, created.ID); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+	if _, err := fleet.GetNode(ctx, conn, created.ID); !errors.Is(err, fleet.ErrNotFound) {
+		t.Fatalf("GetNode after delete: got %v want ErrNotFound", err)
+	}
+}
+
+func TestUpdateNodeOptimisticConcurrency(t *testing.T) {
+	conn := newDB(t)
+	ctx := context.Background()
+
+	n, err := fleet.CreateNode(ctx, conn, fleet.Node{Name: "ams-1", Region: "eu"})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	// Two admins load the same version.
+	stale := n
+
+	// Admin A updates successfully; the version bumps to 2.
+	n.Status = fleet.StatusActive
+	n.PublicIP = "203.0.113.7"
+	updated, err := fleet.UpdateNode(ctx, conn, n)
+	if err != nil {
+		t.Fatalf("UpdateNode (fresh): %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version: got %d want 2", updated.Version)
+	}
+
+	// Admin B writes against the stale version 1 — must be rejected.
+	stale.Status = fleet.StatusStopped
+	if _, err := fleet.UpdateNode(ctx, conn, stale); !errors.Is(err, fleet.ErrStaleVersion) {
+		t.Fatalf("UpdateNode (stale): got %v want ErrStaleVersion", err)
+	}
+
+	// The successful write stuck.
+	got, err := fleet.GetNode(ctx, conn, n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Status != fleet.StatusActive || got.PublicIP != "203.0.113.7" {
+		t.Errorf("GetNode: stale write leaked through: %+v", got)
+	}
+}
+
+func TestUpdateNodeNotFound(t *testing.T) {
+	conn := newDB(t)
+	_, err := fleet.UpdateNode(context.Background(), conn,
+		fleet.Node{ID: "nod_missing", Version: 1})
+	if !errors.Is(err, fleet.ErrNotFound) {
+		t.Fatalf("got %v want ErrNotFound", err)
+	}
+}
+
+func TestDeleteNodeNotFound(t *testing.T) {
+	conn := newDB(t)
+	if err := fleet.DeleteNode(context.Background(), conn, "nod_missing"); !errors.Is(err, fleet.ErrNotFound) {
+		t.Fatalf("got %v want ErrNotFound", err)
+	}
+}
