@@ -4,6 +4,11 @@ modules:
 lint:
   use:
     - STANDARD
+  except:
+    # Kept in sync with docs/proto/buf.yaml — PeerResponse is shared by
+    # AddPeer/RemovePeer and Event is the WatchEvents stream message.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
 breaking:
   use:
     - FILE
