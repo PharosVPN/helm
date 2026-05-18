@@ -1,4 +1,4 @@
-# CI for helm — build, vet, test, lint (DESIGN §14, docs/BUILD.md §7).
+# CI for helm — build the admin SPA, then build/vet/test/lint the Go binary.
 name: ci
 
 on:
@@ -12,14 +12,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           check-latest: true
 
+      - name: web — install
+        working-directory: web
+        run: npm ci
+
+      - name: web — type-check
+        working-directory: web
+        run: npm run check
+
+      - name: web — build SPA
+        working-directory: web
+        run: npm run build
+
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l .)
+          unformatted=$(gofmt -l ./cmd ./internal)
           if [ -n "$unformatted" ]; then
             echo "::error::gofmt needed on:"; echo "$unformatted"; exit 1
           fi

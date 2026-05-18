@@ -57,6 +57,9 @@ func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
 	// Live events — auth-gated (closes the M4 gap).
 	mux.HandleFunc("GET /ws/events", s.requireAuth(s.handleEvents))
 
+	// Everything else — the embedded admin SPA (least-specific pattern).
+	mux.Handle("GET /", spaHandler())
+
 	s.http = &http.Server{
 		Addr:              addr,
 		Handler:           mux,

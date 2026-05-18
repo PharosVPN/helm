@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="dark light" />
+		<title>helm — PharosVPN</title>
+		<script>
+			// Apply the saved theme before first paint to avoid a flash.
+			// bodaay: dark is default; .light-mode flips to light.
+			try {
+				const t = localStorage.getItem('theme');
+				if (t === 'light' || (!t && matchMedia('(prefers-color-scheme: light)').matches)) {
+					document.documentElement.classList.add('light-mode');
+				}
+			} catch (e) {}
+		</script>
+		<link href="/_app/immutable/entry/start.CA8kCrQv.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/D4EmuX8l.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/C_VLQMRN.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/4fqjZ9nc.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.Mt9eTsXJ.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/CrAa7hAL.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/D8mKcUSM.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DWN3iF6P.js" rel="modulepreload">
+		<link href="/_app/immutable/nodes/0.qjEP55SG.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/CHsf9sOe.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/CroqrsMA.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/Cvl3ox8C.js" rel="modulepreload">
+		
+		<link href="/_app/immutable/assets/0.C_J-YGS2.css" rel="stylesheet">
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">
+			<script>
+				{
+					__sveltekit_hmt8hl = {
+						base: ""
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/_app/immutable/entry/start.CA8kCrQv.js"),
+						import("/_app/immutable/entry/app.Mt9eTsXJ.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>
