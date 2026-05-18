@@ -41,6 +41,8 @@ type Node struct {
 	SSHHostKey string
 	// AgentVersion is the buoy build last deployed to the node.
 	AgentVersion string
+	// WGPublicKey is the node's AmneziaWG server public key, reported by buoy.
+	WGPublicKey string
 	// Forwarding, Masquerade, Isolation are the node's network policy
 	// (DESIGN §3, decision 16), set per node from the admin UI.
 	Forwarding bool
@@ -53,7 +55,7 @@ type Node struct {
 }
 
 const nodeColumns = `id, name, region, public_ip, control_addr, cloud_id,
-	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version,
+	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version, wg_public_key,
 	forwarding, masquerade, isolation,
 	status, version, created_at, updated_at`
 
@@ -79,9 +81,9 @@ func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO nodes (`+nodeColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
-		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
@@ -128,12 +130,12 @@ func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 	res, err := db.ExecContext(ctx,
 		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, control_addr = ?,
 		        cloud_id = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?,
-		        ssh_host_key = ?, agent_version = ?,
+		        ssh_host_key = ?, agent_version = ?, wg_public_key = ?,
 		        forwarding = ?, masquerade = ?, isolation = ?, status = ?,
 		        version = version + 1, updated_at = ?
 		 WHERE id = ? AND version = ?`,
 		n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
-		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion,
+		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, now, n.ID, n.Version)
 	if err != nil {
@@ -175,7 +177,7 @@ func scanNode(s rowScanner) (Node, error) {
 	var n Node
 	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &n.ControlAddr,
 		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
-		&n.AgentVersion, &n.Forwarding, &n.Masquerade, &n.Isolation,
+		&n.AgentVersion, &n.WGPublicKey, &n.Forwarding, &n.Masquerade, &n.Isolation,
 		&n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Node{}, err
