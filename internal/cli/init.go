@@ -5,9 +5,12 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/PharosVPN/helm/internal/config"
 	"github.com/PharosVPN/helm/internal/db"
@@ -87,6 +90,12 @@ func runInit(ctx context.Context, opt initOptions) error {
 		cfg.StateDir = opt.stateDir
 	}
 
+	adminPassword, err := generatePassword()
+	if err != nil {
+		return err
+	}
+	cfg.Admin.Password = adminPassword
+
 	snapshotsDir := filepath.Join(cfg.StateDir, "snapshots")
 	if err := os.MkdirAll(snapshotsDir, 0o700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
@@ -122,5 +131,16 @@ func runInit(ctx context.Context, opt initOptions) error {
 		fmt.Printf("  CA           reused existing\n")
 	}
 	fmt.Printf("  root CA SHA-256\n               %s\n", bundle.Root.Fingerprint())
+	fmt.Printf("  admin login  user \"admin\", password: %s\n", adminPassword)
+	fmt.Printf("               (stored in %s — edit there and restart to change)\n", opt.cfgPath)
 	return nil
+}
+
+// generatePassword returns a 120-bit random password as lowercase base32.
+func generatePassword() (string, error) {
+	b := make([]byte, 15)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate admin password: %w", err)
+	}
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)), nil
 }

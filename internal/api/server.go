@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 The PharosVPN Authors
+
+// Package api is helm's localhost admin HTTP server: the JSON API behind the
+// admin UI, the live-event WebSocket, and (from M5 phase B) the embedded
+// SvelteKit SPA. helm opens no public ports — this binds to localhost.
+package api
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/PharosVPN/helm/internal/live"
+)
+
+const (
+	// sessionCookie carries the opaque login session token.
+	sessionCookie   = "helm_session"
+	shutdownTimeout = 5 * time.Second
+)
+
+// Server is the admin HTTP server.
+type Server struct {
+	db   *sql.DB
+	hub  *live.Hub
+	http *http.Server
+}
+
+// NewServer builds the admin server bound to addr (a localhost address).
+func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
+	s := &Server{db: db, hub: hub}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Auth — login is the only unauthenticated API route.
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.handleLogout))
+	mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
+
+	// Fleet.
+	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
+	mux.HandleFunc("GET /api/nodes/{id}", s.requireAuth(s.handleGetNode))
+	mux.HandleFunc("PATCH /api/nodes/{id}", s.requireAuth(s.handleUpdateNode))
+	mux.HandleFunc("DELETE /api/nodes/{id}", s.requireAuth(s.handleDeleteNode))
+
+	// Admins.
+	mux.HandleFunc("GET /api/admins", s.requireAuth(s.handleListAdmins))
+	mux.HandleFunc("POST /api/admins", s.requireAuth(s.handleCreateAdmin))
+	mux.HandleFunc("DELETE /api/admins/{id}", s.requireAuth(s.handleDeleteAdmin))
+
+	// Live events — auth-gated (closes the M4 gap).
+	mux.HandleFunc("GET /ws/events", s.requireAuth(s.handleEvents))
+
+	s.http = &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return s
+}
+
+// Addr returns the configured listen address.
+func (s *Server) Addr() string { return s.http.Addr }
+
+// Run serves until ctx is cancelled, then shuts down gracefully.
+func (s *Server) Run(ctx context.Context) error {
+	errc := make(chan error, 1)
+	go func() {
+		err := s.http.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errc <- err
+	}()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		return s.http.Shutdown(shutCtx)
+	}
+}
