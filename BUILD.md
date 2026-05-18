@@ -53,6 +53,18 @@ lands, update `docs/proto/`:
 
 Coordinate every proto change with the dependent subproject's BUILD.
 
+### Pinned `beacon` ↔ `helm` identifiers
+
+Confirmed with the `beacon` agent during its R1. The M6b relayed-client proto
+and PKI **must** use these exact values:
+
+| Role | Value |
+|---|---|
+| Injected verified-device-fingerprint metadata key | `x-pharos-device-fp` |
+| Stripped client-metadata prefix (anti-spoofing) | `x-pharos-` |
+| Backend delegation cert `Organization` | `PharosVPN Relay` |
+| `helm` gRPC-leg leaf `CN` / backend SNI | `helm-grpc` |
+
 ## Non-negotiables
 
 - No inbound ports. All node/relay connections are helm-initiated.
