@@ -202,6 +202,40 @@ func TestUsersLifecycle(t *testing.T) {
 	}
 }
 
+func TestNetworkPolicyPreview(t *testing.T) {
+	ts, client, _ := setup(t)
+	login(t, ts, client)
+
+	// A valid policy returns the rule set.
+	resp, err := client.Post(ts.URL+"/api/network-policy/preview", "application/json",
+		strings.NewReader(`{"forwarding":true,"masquerade":true,"isolation":false}`))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	var rules struct {
+		PostUp []string `json:"post_up"`
+	}
+	json.NewDecoder(resp.Body).Decode(&rules) //nolint:errcheck
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("preview: status %d", resp.StatusCode)
+	}
+	if len(rules.PostUp) == 0 {
+		t.Error("preview returned no PostUp rules")
+	}
+
+	// An invalid policy is rejected.
+	bad, err := client.Post(ts.URL+"/api/network-policy/preview", "application/json",
+		strings.NewReader(`{"forwarding":false,"masquerade":true,"isolation":false}`))
+	if err != nil {
+		t.Fatalf("preview (invalid): %v", err)
+	}
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid policy: status %d want 400", bad.StatusCode)
+	}
+}
+
 func patchNode(t *testing.T, client *http.Client, ts *httptest.Server, id string, version int, name string) int {
 	t.Helper()
 	body := `{"version":` + strconv.Itoa(version) + `,"name":"` + name + `"}`

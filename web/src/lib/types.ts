@@ -18,6 +18,9 @@ export interface Node {
 	ssh_host: string;
 	control_addr: string;
 	agent_version: string;
+	forwarding: boolean;
+	masquerade: boolean;
+	isolation: boolean;
 	version: number;
 	created_at: string;
 	updated_at: string;

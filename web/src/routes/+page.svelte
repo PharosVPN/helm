@@ -4,7 +4,14 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api, errorMessage, isApiError } from '$lib/api';
 	import Modal from '$lib/components/Modal.svelte';
+	import Switch from '$lib/components/Switch.svelte';
 	import type { Node, LiveEvent } from '$lib/types';
+
+	interface Rules {
+		pre_up: string[];
+		post_up: string[];
+		post_down: string[];
+	}
 
 	let nodes = $state<Node[]>([]);
 	let loading = $state(true);
@@ -13,10 +20,16 @@
 	let events = $state<LiveEvent[]>([]);
 	let wsConnected = $state(false);
 
-	let renaming = $state<Node | null>(null);
-	let renameValue = $state('');
-	let renameError = $state('');
-	let renameBusy = $state(false);
+	// Node settings modal — name + network policy.
+	let editing = $state<Node | null>(null);
+	let editName = $state('');
+	let fwd = $state(true);
+	let masq = $state(true);
+	let iso = $state(false);
+	let editError = $state('');
+	let editBusy = $state(false);
+	let advancedOpen = $state(false);
+	let rules = $state<Rules | null>(null);
 
 	let deleting = $state<Node | null>(null);
 	let deleteError = $state('');
@@ -39,6 +52,14 @@
 	function clockTime(iso: string): string {
 		const d = new Date(iso);
 		return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
+	}
+
+	function policyLabel(n: Node): string {
+		if (!n.forwarding) return 'no forwarding';
+		const parts = ['forwarding'];
+		if (n.masquerade) parts.push('NAT');
+		if (n.isolation) parts.push('isolated');
+		return parts.join(' · ');
 	}
 
 	async function loadNodes() {
@@ -64,8 +85,7 @@
 		ws.onopen = () => (wsConnected = true);
 		ws.onmessage = (m) => {
 			try {
-				const ev = JSON.parse(m.data) as LiveEvent;
-				events = [ev, ...events].slice(0, 50);
+				events = [JSON.parse(m.data) as LiveEvent, ...events].slice(0, 50);
 			} catch {
 				/* ignore malformed frame */
 			}
@@ -87,29 +107,54 @@
 		ws?.close();
 	});
 
-	// ───────── Rename (optimistic concurrency) ─────────
-	function openRename(n: Node) {
-		renaming = n;
-		renameValue = n.name;
-		renameError = '';
+	// ───────── Node settings ─────────
+	function openEdit(n: Node) {
+		editing = n;
+		editName = n.name;
+		fwd = n.forwarding;
+		masq = n.masquerade;
+		iso = n.isolation;
+		editError = '';
+		advancedOpen = false;
+		rules = null;
 	}
-	async function submitRename() {
-		if (!renaming) return;
-		renameBusy = true;
-		renameError = '';
+
+	// Masquerade and isolation require forwarding — clamp when it is off.
+	$effect(() => {
+		if (!fwd && (masq || iso)) {
+			masq = false;
+			iso = false;
+		}
+	});
+
+	// Refresh the rule preview whenever the policy changes while editing.
+	$effect(() => {
+		if (!editing) return;
+		const body = { forwarding: fwd, masquerade: masq, isolation: iso };
+		api.post<Rules>('/api/network-policy/preview', body)
+			.then((r) => (rules = r))
+			.catch(() => (rules = null));
+	});
+
+	async function submitEdit() {
+		if (!editing) return;
+		editBusy = true;
+		editError = '';
 		try {
-			const updated = await api.patch<Node>(`/api/nodes/${renaming.id}`, {
-				version: renaming.version,
-				name: renameValue
+			const updated = await api.patch<Node>(`/api/nodes/${editing.id}`, {
+				version: editing.version,
+				name: editName,
+				forwarding: fwd,
+				masquerade: masq,
+				isolation: iso
 			});
 			nodes = nodes.map((n) => (n.id === updated.id ? updated : n));
-			renaming = null;
+			editing = null;
 		} catch (e) {
-			renameError = errorMessage(e);
-			// On a 409 the row is stale — refresh so a retry uses live data.
+			editError = errorMessage(e);
 			if (isApiError(e) && e.status === 409) loadNodes();
 		}
-		renameBusy = false;
+		editBusy = false;
 	}
 
 	// ───────── Delete ─────────
@@ -133,7 +178,6 @@
 <h1 class="section-title">Fleet</h1>
 <p class="section-subtitle">buoy nodes under this controller.</p>
 
-<!-- Stat cards -->
 <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
 	{#each [{ label: 'Total nodes', value: total }, { label: 'Active', value: activeCount }, { label: 'Needs attention', value: attentionCount }] as stat (stat.label)}
 		<div class="card p-5">
@@ -143,7 +187,6 @@
 	{/each}
 </div>
 
-<!-- Node table -->
 <div class="mt-8 card overflow-hidden">
 	{#if loading}
 		<div class="p-6 text-sm text-ink-3">Loading nodes…</div>
@@ -160,7 +203,7 @@
 		<table class="dtable">
 			<thead>
 				<tr>
-					<th>Name</th><th>Region</th><th>Status</th><th>SSH host</th>
+					<th>Name</th><th>Region</th><th>Status</th><th>Network</th>
 					<th>Agent</th><th class="text-right">Actions</th>
 				</tr>
 			</thead>
@@ -174,10 +217,10 @@
 								<span class="dot"></span>{n.status}
 							</span>
 						</td>
-						<td class="text-ink-2">{n.ssh_host || '—'}</td>
+						<td class="text-ink-2">{policyLabel(n)}</td>
 						<td class="text-ink-2">{n.agent_version || '—'}</td>
 						<td class="text-right whitespace-nowrap">
-							<button class="btn btn-text btn-sm" onclick={() => openRename(n)}>Rename</button>
+							<button class="btn btn-text btn-sm" onclick={() => openEdit(n)}>Settings</button>
 							<button
 								class="btn btn-text btn-sm"
 								style="color: var(--c-danger)"
@@ -194,7 +237,6 @@
 	{/if}
 </div>
 
-<!-- Live events -->
 <div class="mt-8">
 	<div class="flex items-center gap-2">
 		<h2 class="section-title">Live events</h2>
@@ -223,16 +265,92 @@
 	</div>
 </div>
 
-<!-- Rename dialog -->
-{#if renaming}
-	<Modal title="Rename node" onclose={() => (renaming = null)}>
-		<label class="label" for="rename">Node name</label>
-		<input id="rename" class="input" bind:value={renameValue} />
-		{#if renameError}<p class="field-error" role="alert">{renameError}</p>{/if}
+<!-- Node settings: name + network policy -->
+{#if editing}
+	<Modal title="Node settings" onclose={() => (editing = null)}>
+		<label class="label" for="node-name">Node name</label>
+		<input id="node-name" class="input" bind:value={editName} />
+
+		<p class="overline mt-6">Network policy</p>
+		<div class="mt-2 flex flex-col">
+			<button
+				type="button"
+				role="switch"
+				aria-checked={fwd}
+				class="toggle-row"
+				onclick={() => (fwd = !fwd)}
+			>
+				<span class="toggle-text">
+					<span class="text-sm font-medium text-ink">Forwarding</span>
+					<span class="text-xs text-ink-3">Route client traffic onward. Off makes the node a dead end.</span>
+				</span>
+				<Switch checked={fwd} />
+			</button>
+
+			<button
+				type="button"
+				role="switch"
+				aria-checked={masq}
+				class="toggle-row"
+				disabled={!fwd}
+				onclick={() => (masq = !masq)}
+			>
+				<span class="toggle-text">
+					<span class="text-sm font-medium text-ink">Masquerade (NAT)</span>
+					<span class="text-xs text-ink-3">On: clients share the node's IP. Off: destinations see the client's tunnel IP.</span>
+				</span>
+				<Switch checked={masq} disabled={!fwd} />
+			</button>
+
+			<button
+				type="button"
+				role="switch"
+				aria-checked={iso}
+				class="toggle-row"
+				disabled={!fwd}
+				onclick={() => (iso = !iso)}
+			>
+				<span class="toggle-text">
+					<span class="text-sm font-medium text-ink">Client isolation</span>
+					<span class="text-xs text-ink-3">On: clients cannot reach each other. Off: clients route peer-to-peer.</span>
+				</span>
+				<Switch checked={iso} disabled={!fwd} />
+			</button>
+		</div>
+
+		<details class="mt-4" bind:open={advancedOpen}>
+			<summary class="cursor-pointer text-xs font-medium text-brand">
+				Advanced — generated firewall rules
+			</summary>
+			<div class="mt-2 rounded-md border border-line bg-bg p-3">
+				{#if rules}
+					{#each [{ h: 'PreUp', lines: rules.pre_up }, { h: 'PostUp', lines: rules.post_up }, { h: 'PostDown', lines: rules.post_down }] as group (group.h)}
+						{#if group.lines.length}
+							<div class="mb-2 last:mb-0">
+								<div class="text-[11px] font-semibold text-ink-3">{group.h}</div>
+								{#each group.lines as line (line)}
+									<div class="font-mono text-xs text-ink-2">{line}</div>
+								{/each}
+							</div>
+						{/if}
+					{/each}
+					{#if !rules.pre_up.length && !rules.post_up.length}
+						<div class="text-xs text-ink-3">No rules — forwarding is off.</div>
+					{/if}
+					<div class="mt-2 text-[11px] text-ink-4">
+						%i = the WireGuard interface · %e = the node's egress interface (autodetected by buoy)
+					</div>
+				{:else}
+					<div class="text-xs text-ink-3">Generating…</div>
+				{/if}
+			</div>
+		</details>
+
+		{#if editError}<p class="field-error" role="alert">{editError}</p>{/if}
 		<div class="mt-6 flex justify-end gap-3">
-			<button class="btn btn-secondary" onclick={() => (renaming = null)}>Cancel</button>
-			<button class="btn btn-primary" onclick={submitRename} disabled={renameBusy}>
-				{renameBusy ? 'Saving…' : 'Save'}
+			<button class="btn btn-secondary" onclick={() => (editing = null)}>Cancel</button>
+			<button class="btn btn-primary" onclick={submitEdit} disabled={editBusy}>
+				{editBusy ? 'Saving…' : 'Save'}
 			</button>
 		</div>
 	</Modal>
@@ -254,3 +372,26 @@
 		</div>
 	</Modal>
 {/if}
+
+<style>
+	.toggle-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		min-height: 48px;
+		padding: 8px 0;
+		background: transparent;
+		border: none;
+		text-align: left;
+		cursor: pointer;
+	}
+	.toggle-row:disabled {
+		cursor: not-allowed;
+	}
+	.toggle-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+</style>

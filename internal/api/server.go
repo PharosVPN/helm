@@ -48,6 +48,7 @@ func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
 	mux.HandleFunc("GET /api/nodes/{id}", s.requireAuth(s.handleGetNode))
 	mux.HandleFunc("PATCH /api/nodes/{id}", s.requireAuth(s.handleUpdateNode))
 	mux.HandleFunc("DELETE /api/nodes/{id}", s.requireAuth(s.handleDeleteNode))
+	mux.HandleFunc("POST /api/network-policy/preview", s.requireAuth(s.handleNetworkPolicyPreview))
 
 	// Admins.
 	mux.HandleFunc("GET /api/admins", s.requireAuth(s.handleListAdmins))
