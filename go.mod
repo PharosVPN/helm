@@ -3,6 +3,7 @@ module github.com/PharosVPN/helm
 go 1.25.7
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
