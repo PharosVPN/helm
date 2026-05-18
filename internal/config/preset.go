@@ -39,7 +39,7 @@ func personalPreset() Config {
 	c.Protocols = ProtocolsConfig{AmneziaWG: true, XRay: false}
 	c.Beacon.Remote = false
 	c.Retention = RetentionConfig{AuditDays: 30, MetricsDays: 7}
-	c.Fleet = FleetConfig{Regions: []string{}, IdleNodes: false}
+	c.Fleet = FleetConfig{Regions: []string{}, IdleNodes: false, VPNSubnet: "10.86.0.0/16"}
 	return c
 }
 
@@ -49,6 +49,6 @@ func enterprisePreset() Config {
 	c.Protocols = ProtocolsConfig{AmneziaWG: true, XRay: true}
 	c.Beacon.Remote = true
 	c.Retention = RetentionConfig{AuditDays: 365, MetricsDays: 90}
-	c.Fleet = FleetConfig{Regions: []string{}, IdleNodes: true}
+	c.Fleet = FleetConfig{Regions: []string{}, IdleNodes: true, VPNSubnet: "10.86.0.0/16"}
 	return c
 }

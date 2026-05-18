@@ -100,11 +100,13 @@ type RealityConfig struct {
 	DecoySite string `koanf:"decoy_site" yaml:"decoy_site"`
 }
 
-// FleetConfig holds fleet-shape defaults consumed by provisioning (M2).
+// FleetConfig holds fleet-shape defaults.
 type FleetConfig struct {
 	// Regions the operator intends to deploy into. Empty means "decide at
 	// provisioning time" (personal: one, nearest).
 	Regions []string `koanf:"regions" yaml:"regions"`
 	// IdleNodes encourages pre-positioned, stopped nodes (enterprise).
 	IdleNodes bool `koanf:"idle_nodes" yaml:"idle_nodes"`
+	// VPNSubnet is the CIDR helm allocates per-device tunnel addresses from.
+	VPNSubnet string `koanf:"vpn_subnet" yaml:"vpn_subnet"`
 }
