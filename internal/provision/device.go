@@ -61,8 +61,8 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID string, opts Opti
 
 	var buildNodes []profile.BuildNode
 	for _, n := range nodes {
-		if n.WGPublicKey == "" || len(n.EndpointAddrs()) == 0 {
-			continue // node has not reported its data-plane key yet
+		if n.WGPublicKey == "" || n.Obfuscation.IsZero() || len(n.EndpointAddrs()) == 0 {
+			continue // node has not reported its data-plane config yet
 		}
 		psk := profile.GeneratePresharedKey()
 		if _, err := fleet.CreatePeer(ctx, db, fleet.Peer{
@@ -83,6 +83,7 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID string, opts Opti
 			WGPublicKey:  n.WGPublicKey,
 			PresharedKey: psk,
 			AllowedIPs:   []string{"0.0.0.0/0", "::/0"},
+			Obfuscation:  n.Obfuscation,
 		})
 	}
 

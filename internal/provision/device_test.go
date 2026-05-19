@@ -17,6 +17,7 @@ import (
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/profile"
 	"github.com/PharosVPN/helm/internal/provision"
+	"github.com/PharosVPN/helm/internal/wg"
 )
 
 var opts = provision.Options{
@@ -24,6 +25,14 @@ var opts = provision.Options{
 	PortMin:   2000,
 	PortMax:   60000,
 	Rotation:  profile.RotationPolicy{Enabled: true, IntervalSeconds: 600, JitterSeconds: 120},
+}
+
+// testObfuscation is a non-zero obfuscation set marking a node as data-plane
+// ready (its H1-H4 are non-zero, so it passes provisioning's readiness gate).
+var testObfuscation = wg.Obfuscation{
+	Jc: 4, Jmin: 40, Jmax: 70,
+	S1: 30, S2: 45, S3: 60, S4: 75,
+	H1: 1515448789, H2: 2406647629, H3: 3604601557, H4: 1124628755,
 }
 
 func newDB(t *testing.T) *sql.DB {
@@ -75,8 +84,8 @@ func TestProvisionDevice(t *testing.T) {
 	// Two ready nodes and one still pending (no WG key) — the pending one
 	// must be skipped.
 	for _, n := range []fleet.Node{
-		{Name: "ams-1", Region: "eu", PublicIP: "203.0.113.7", WGPublicKey: "bm9kZS1hbXMtd2cta2V5LWJhc2U2NA=="},
-		{Name: "fra-1", Region: "eu", PublicIP: "203.0.113.8", WGPublicKey: "bm9kZS1mcmEtd2cta2V5LWJhc2U2NA=="},
+		{Name: "ams-1", Region: "eu", PublicIP: "203.0.113.7", WGPublicKey: "bm9kZS1hbXMtd2cta2V5LWJhc2U2NA==", Obfuscation: testObfuscation},
+		{Name: "fra-1", Region: "eu", PublicIP: "203.0.113.8", WGPublicKey: "bm9kZS1mcmEtd2cta2V5LWJhc2U2NA==", Obfuscation: testObfuscation},
 		{Name: "pending", Region: "us"},
 	} {
 		if _, err := fleet.CreateNode(ctx, conn, n); err != nil {
@@ -139,16 +148,22 @@ func TestProvisionDevice(t *testing.T) {
 	// The amneziawg params carry the device key, the endpoint pool, and the
 	// rotation policy (decision 17).
 	var params struct {
-		PrivateKey string                 `json:"private_key"`
-		PublicKey  string                 `json:"public_key"`
-		Endpoints  []profile.EndpointPool `json:"endpoints"`
-		Rotation   profile.RotationPolicy `json:"rotation"`
+		PrivateKey  string                 `json:"private_key"`
+		PublicKey   string                 `json:"public_key"`
+		Endpoints   []profile.EndpointPool `json:"endpoints"`
+		Rotation    profile.RotationPolicy `json:"rotation"`
+		Obfuscation wg.Obfuscation         `json:"obfuscation"`
 	}
 	if err := json.Unmarshal(proto.Params, &params); err != nil {
 		t.Fatalf("unmarshal params: %v", err)
 	}
 	if params.PrivateKey == "" || params.PublicKey == "" {
 		t.Errorf("amneziawg params incomplete: %+v", params)
+	}
+	// The node's obfuscation set is carried into the profile so the client can
+	// build a tunnel that handshakes (DESIGN §3).
+	if params.Obfuscation != testObfuscation {
+		t.Errorf("obfuscation not carried into params: got %+v want %+v", params.Obfuscation, testObfuscation)
 	}
 	if len(params.Endpoints) != 1 || params.Endpoints[0].PortMin != 2000 || params.Endpoints[0].PortMax != 60000 {
 		t.Errorf("endpoint pool: got %+v", params.Endpoints)
@@ -165,6 +180,7 @@ func TestAllocateDeviceIPSequential(t *testing.T) {
 
 	if _, err := fleet.CreateNode(ctx, conn, fleet.Node{
 		Name: "n1", Region: "eu", PublicIP: "203.0.113.7", WGPublicKey: "d2cta2V5LWZvci10aGUtdGVzdC1ub2Rl",
+		Obfuscation: testObfuscation,
 	}); err != nil {
 		t.Fatalf("CreateNode: %v", err)
 	}
