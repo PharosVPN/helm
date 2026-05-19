@@ -48,9 +48,9 @@ func newServeCmd() *cobra.Command {
 			// (DESIGN §2): an in-process relay and/or reverse tunnels out to
 			// remote beacons. Relay failures are non-fatal — the admin plane
 			// still serves; only client sync is unavailable.
-			remotes := []string(nil)
-			if cfg.Beacon.Remote {
-				remotes = cfg.Beacon.RemoteEndpoints
+			remotes, err := remoteRelayEndpoints(ctx, cfg, conn)
+			if err != nil {
+				return err
 			}
 			if cfg.Accounts.Sync && (cfg.Beacon.Embedded || len(remotes) > 0) {
 				if stop := startBeaconRelay(ctx, cfg, conn, remotes); stop != nil {
@@ -104,6 +104,37 @@ func newServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
 	return cmd
+}
+
+// remoteRelayEndpoints is the set of remote beacon tunnel addresses helm dials:
+// the relays enrolled with `helm relays add` (active, kind "remote") unioned
+// with any beacon.remote_endpoints in the config. Enrolled relays are dialed
+// whenever they are active; config endpoints honour the beacon.remote toggle.
+func remoteRelayEndpoints(ctx context.Context, cfg config.Config, conn *sql.DB) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	add := func(ep string) {
+		if ep != "" && !seen[ep] {
+			seen[ep] = true
+			out = append(out, ep)
+		}
+	}
+
+	relays, err := fleet.ListRelays(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range relays {
+		if r.Kind == fleet.RelayKindRemote && r.Status == fleet.StatusActive {
+			add(r.Endpoint)
+		}
+	}
+	if cfg.Beacon.Remote {
+		for _, ep := range cfg.Beacon.RemoteEndpoints {
+			add(ep)
+		}
+	}
+	return out, nil
 }
 
 // startBeaconRelay issues helm's beacon-tier service certs and brings up the

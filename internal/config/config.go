@@ -83,8 +83,12 @@ type BeaconConfig struct {
 	Remote bool `koanf:"remote" yaml:"remote"`
 	// RemoteEndpoints are the tunnel-listener addresses of remote beacon
 	// relays helm dials out to (DESIGN §2). helm keeps zero inbound ports —
-	// it reconnects to each forever. Used only when Remote is true.
+	// it reconnects to each forever. Used only when Remote is true. Relays
+	// enrolled with `helm relays add` are dialed in addition to these.
 	RemoteEndpoints []string `koanf:"remote_endpoints" yaml:"remote_endpoints"`
+	// BinaryURL is the default download URL for the beacon binary, used by
+	// `helm relays add` when no local binary is supplied.
+	BinaryURL string `koanf:"binary_url" yaml:"binary_url"`
 	// PublicEndpoint is the address clients reach a beacon at — baked into
 	// enrollment tickets so a scanned device knows where to connect.
 	PublicEndpoint string `koanf:"public_endpoint" yaml:"public_endpoint"`

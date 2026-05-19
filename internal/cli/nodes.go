@@ -118,12 +118,13 @@ func newNodesStatusCmd() *cobra.Command {
 	return cmd
 }
 
-// installSpec resolves how to install the buoy agent from the CLI flags.
-func installSpec(binaryPath, url, defaultURL string) (deploy.InstallSpec, error) {
+// installSpec resolves how to install an agent binary from the CLI flags.
+// configHint names the config key that supplies a default URL.
+func installSpec(binaryPath, url, defaultURL, configHint string) (deploy.InstallSpec, error) {
 	if binaryPath != "" {
 		data, err := os.ReadFile(binaryPath)
 		if err != nil {
-			return deploy.InstallSpec{}, fmt.Errorf("read buoy binary: %w", err)
+			return deploy.InstallSpec{}, fmt.Errorf("read binary: %w", err)
 		}
 		return deploy.InstallSpec{Binary: data}, nil
 	}
@@ -132,7 +133,7 @@ func installSpec(binaryPath, url, defaultURL string) (deploy.InstallSpec, error)
 	}
 	if url == "" {
 		return deploy.InstallSpec{}, fmt.Errorf(
-			"provide --binary, --url, or set node.buoy_binary_url in the config")
+			"provide --binary, --url, or set %s in the config", configHint)
 	}
 	return deploy.InstallSpec{URL: url}, nil
 }
@@ -156,7 +157,7 @@ func newNodesAddCmd() *cobra.Command {
 			}
 			defer conn.Close()
 
-			spec, err := installSpec(binaryPath, url, cfg.Node.BuoyBinaryURL)
+			spec, err := installSpec(binaryPath, url, cfg.Node.BuoyBinaryURL, "node.buoy_binary_url")
 			if err != nil {
 				return err
 			}
@@ -266,7 +267,7 @@ func newNodesUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			spec, err := installSpec(binaryPath, url, cfg.Node.BuoyBinaryURL)
+			spec, err := installSpec(binaryPath, url, cfg.Node.BuoyBinaryURL, "node.buoy_binary_url")
 			if err != nil {
 				return err
 			}

@@ -55,6 +55,10 @@ func (f *fakeRemote) Run(_ context.Context, cmd string, _ []byte) ([]byte, error
 		return f.csrPEM, nil
 	case "/usr/local/bin/buoy version":
 		return []byte("buoy 0.1.0-test\n"), nil
+	case "/usr/local/bin/beacon gen-csr":
+		return f.csrPEM, nil
+	case "/usr/local/bin/beacon version":
+		return []byte("beacon 0.1.0-test\n"), nil
 	default:
 		return nil, nil
 	}
