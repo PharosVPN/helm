@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -108,6 +109,48 @@ func TestEmbeddedRelayRoundTrip(t *testing.T) {
 		Email: "user@example.com", Password: "wrong",
 	}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bad password through relay: got %v want Unauthenticated", err)
+	}
+}
+
+// TestRunRemoteStopsOnContextCancel checks that the remote reverse-tunnel
+// dialer reconnects against an unreachable beacon and unwinds cleanly when its
+// context is cancelled — helm's shutdown path must not hang on a dead relay.
+func TestRunRemoteStopsOnContextCancel(t *testing.T) {
+	conn, err := db.Open(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := db.Migrate(conn); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	bundle, _, err := pki.EnsureCA(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	relayCert, err := pki.EnsureServiceCert(context.Background(), conn, bundle.Fleet, pki.ServiceRelay)
+	if err != nil {
+		t.Fatalf("EnsureServiceCert relay: %v", err)
+	}
+
+	srv := grpc.NewServer()
+	t.Cleanup(srv.Stop)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		// 127.0.0.1:1 is unreachable, so the dialer stays in its retry loop.
+		done <- relayhost.RunRemote(ctx, srv, "127.0.0.1:1", relayCert, bundle.Fleet.CertPEM)
+	}()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunRemote: got %v want context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunRemote did not return after context cancel")
 	}
 }
 

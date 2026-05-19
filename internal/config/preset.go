@@ -25,7 +25,7 @@ func common() Config {
 		StateDir: "./state",
 		Log:      LogConfig{Level: "info"},
 		UI:       UIConfig{Listen: "127.0.0.1:8443"},
-		Beacon:   BeaconConfig{Embedded: true, ClientListen: ":443"},
+		Beacon:   BeaconConfig{Embedded: true, ClientListen: ":443", RemoteEndpoints: []string{}},
 		Accounts: AccountsConfig{Sync: true},
 		Reality:  RealityConfig{DecoySite: "www.microsoft.com"},
 		// BuoyBinaryURL is left for the operator to point at a buoy release.

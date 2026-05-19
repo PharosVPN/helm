@@ -5,6 +5,7 @@ package config
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestPresetWriteLoadRoundTrip(t *testing.T) {
 			if got.Protocols != want.Protocols {
 				t.Errorf("protocols: got %+v want %+v", got.Protocols, want.Protocols)
 			}
-			if got.Beacon != want.Beacon {
+			if !reflect.DeepEqual(got.Beacon, want.Beacon) {
 				t.Errorf("beacon: got %+v want %+v", got.Beacon, want.Beacon)
 			}
 		})
