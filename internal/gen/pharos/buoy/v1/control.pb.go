@@ -150,8 +150,10 @@ type Peer struct {
 	AllowedIps []string `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
 	// preshared_key is optional (AmneziaWG).
 	PresharedKey string `protobuf:"bytes,5,opt,name=preshared_key,json=presharedKey,proto3" json:"preshared_key,omitempty"`
-	// endpoint is an optional fixed peer endpoint.
-	Endpoint      string `protobuf:"bytes,6,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	// endpoints are the peer's addresses. Always an array — multiple entries
+	// support endpoint diversity and rotation (DESIGN §3, decision 17); a
+	// single address is still a one-element array.
+	Endpoints     []string `protobuf:"bytes,6,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -221,11 +223,11 @@ func (x *Peer) GetPresharedKey() string {
 	return ""
 }
 
-func (x *Peer) GetEndpoint() string {
+func (x *Peer) GetEndpoints() []string {
 	if x != nil {
-		return x.Endpoint
+		return x.Endpoints
 	}
-	return ""
+	return nil
 }
 
 // PeerState is a Peer plus its runtime state on the node.
@@ -1294,7 +1296,7 @@ var File_pharos_buoy_v1_control_proto protoreflect.FileDescriptor
 
 const file_pharos_buoy_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x1cpharos/buoy/v1/control.proto\x12\x0epharos.buoy.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcd\x01\n" +
+	"\x1cpharos/buoy/v1/control.proto\x12\x0epharos.buoy.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcf\x01\n" +
 	"\x04Peer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\bprotocol\x18\x02 \x01(\x0e2\x18.pharos.buoy.v1.ProtocolR\bprotocol\x12\x1d\n" +
@@ -1302,8 +1304,8 @@ const file_pharos_buoy_v1_control_proto_rawDesc = "" +
 	"public_key\x18\x03 \x01(\tR\tpublicKey\x12\x1f\n" +
 	"\vallowed_ips\x18\x04 \x03(\tR\n" +
 	"allowedIps\x12#\n" +
-	"\rpreshared_key\x18\x05 \x01(\tR\fpresharedKey\x12\x1a\n" +
-	"\bendpoint\x18\x06 \x01(\tR\bendpoint\"\xae\x01\n" +
+	"\rpreshared_key\x18\x05 \x01(\tR\fpresharedKey\x12\x1c\n" +
+	"\tendpoints\x18\x06 \x03(\tR\tendpoints\"\xae\x01\n" +
 	"\tPeerState\x12(\n" +
 	"\x04peer\x18\x01 \x01(\v2\x14.pharos.buoy.v1.PeerR\x04peer\x12A\n" +
 	"\x0elast_handshake\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\rlastHandshake\x12\x19\n" +
