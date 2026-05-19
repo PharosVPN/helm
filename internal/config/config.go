@@ -109,4 +109,19 @@ type FleetConfig struct {
 	IdleNodes bool `koanf:"idle_nodes" yaml:"idle_nodes"`
 	// VPNSubnet is the CIDR helm allocates per-device tunnel addresses from.
 	VPNSubnet string `koanf:"vpn_subnet" yaml:"vpn_subnet"`
+	// EndpointPortMin/Max is the UDP port range each node accepts AmneziaWG
+	// on (DESIGN §3, decision 17) — the breadth of the endpoint pool.
+	EndpointPortMin int `koanf:"endpoint_port_min" yaml:"endpoint_port_min"`
+	EndpointPortMax int `koanf:"endpoint_port_max" yaml:"endpoint_port_max"`
+	// Rotation is the client endpoint-rotation policy (anti-correlation).
+	Rotation RotationConfig `koanf:"rotation" yaml:"rotation"`
+}
+
+// RotationConfig is the client endpoint-rotation policy (DESIGN §3,
+// decision 17). When enabled, a client re-picks its (ip, port) endpoint every
+// IntervalSeconds, jittered by up to JitterSeconds.
+type RotationConfig struct {
+	Enabled         bool `koanf:"enabled" yaml:"enabled"`
+	IntervalSeconds int  `koanf:"interval_seconds" yaml:"interval_seconds"`
+	JitterSeconds   int  `koanf:"jitter_seconds" yaml:"jitter_seconds"`
 }

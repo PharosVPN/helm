@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/PharosVPN/helm/internal/idgen"
@@ -26,10 +27,13 @@ const (
 
 // Node is one buoy in the fleet inventory (the `nodes` table).
 type Node struct {
-	ID          string
-	Name        string
-	Region      string
-	PublicIP    string
+	ID       string
+	Name     string
+	Region   string
+	PublicIP string
+	// EndpointIPs is the node's AmneziaWG endpoint IP pool (decision 17).
+	// Empty means "use PublicIP only".
+	EndpointIPs []string
 	ControlAddr string
 	CloudID     string
 	// SSHHost, SSHUser, SSHPort are how helm reaches the node to install and
@@ -54,10 +58,30 @@ type Node struct {
 	UpdatedAt  time.Time
 }
 
-const nodeColumns = `id, name, region, public_ip, control_addr, cloud_id,
+const nodeColumns = `id, name, region, public_ip, endpoint_ips, control_addr, cloud_id,
 	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version, wg_public_key,
 	forwarding, masquerade, isolation,
 	status, version, created_at, updated_at`
+
+// EndpointAddrs returns the node's endpoint IP pool, falling back to the
+// primary public IP when no pool is configured.
+func (n Node) EndpointAddrs() []string {
+	if len(n.EndpointIPs) > 0 {
+		return n.EndpointIPs
+	}
+	if n.PublicIP != "" {
+		return []string{n.PublicIP}
+	}
+	return nil
+}
+
+func joinIPs(ips []string) string { return strings.Join(ips, ",") }
+func splitIPs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
 
 // CreateNode inserts a new node. ID and Status are filled in if empty, SSHPort
 // defaults to 22, Version is set to 1, and the network policy starts at the
@@ -81,8 +105,8 @@ func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO nodes (`+nodeColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Name, n.Region, n.PublicIP, joinIPs(n.EndpointIPs), n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
@@ -128,13 +152,13 @@ func ListNodes(ctx context.Context, db *sql.DB) ([]Node, error) {
 func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx,
-		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, control_addr = ?,
-		        cloud_id = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?,
-		        ssh_host_key = ?, agent_version = ?, wg_public_key = ?,
+		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, endpoint_ips = ?,
+		        control_addr = ?, cloud_id = ?, ssh_host = ?, ssh_user = ?,
+		        ssh_port = ?, ssh_host_key = ?, agent_version = ?, wg_public_key = ?,
 		        forwarding = ?, masquerade = ?, isolation = ?, status = ?,
 		        version = version + 1, updated_at = ?
 		 WHERE id = ? AND version = ?`,
-		n.Name, n.Region, n.PublicIP, n.ControlAddr, n.CloudID,
+		n.Name, n.Region, n.PublicIP, joinIPs(n.EndpointIPs), n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, now, n.ID, n.Version)
@@ -174,13 +198,17 @@ func DeleteNode(ctx context.Context, db *sql.DB, id string) error {
 }
 
 func scanNode(s rowScanner) (Node, error) {
-	var n Node
-	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &n.ControlAddr,
+	var (
+		n           Node
+		endpointIPs string
+	)
+	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &endpointIPs, &n.ControlAddr,
 		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
 		&n.AgentVersion, &n.WGPublicKey, &n.Forwarding, &n.Masquerade, &n.Isolation,
 		&n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Node{}, err
 	}
+	n.EndpointIPs = splitIPs(endpointIPs)
 	return n, nil
 }

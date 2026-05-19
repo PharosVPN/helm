@@ -10,7 +10,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 
 	"github.com/PharosVPN/helm/internal/account"
 	"github.com/PharosVPN/helm/internal/fleet"
@@ -18,8 +17,13 @@ import (
 	"github.com/PharosVPN/helm/internal/wg"
 )
 
-// awgPort is the UDP port a buoy serves AmneziaWG on (DESIGN §2).
-const awgPort = "443"
+// Options carries the fleet settings provisioning needs (from the config).
+type Options struct {
+	VPNSubnet string
+	PortMin   int
+	PortMax   int
+	Rotation  profile.RotationPolicy
+}
 
 // Result reports what ProvisionDevice produced.
 type Result struct {
@@ -36,7 +40,7 @@ type Result struct {
 //
 // The peer records are helm's desired state; pushing them to buoy over the
 // control channel is the control loop's job.
-func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID, vpnSubnet string) (Result, error) {
+func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID string, opts Options) (Result, error) {
 	device, err := account.GetDevice(ctx, db, deviceID)
 	if err != nil {
 		return Result{}, err
@@ -46,7 +50,7 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID, vpnSubnet string
 	if err != nil {
 		return Result{}, err
 	}
-	tunnelIP, err := fleet.AllocateDeviceIP(ctx, db, vpnSubnet)
+	tunnelIP, err := fleet.AllocateDeviceIP(ctx, db, opts.VPNSubnet)
 	if err != nil {
 		return Result{}, err
 	}
@@ -57,7 +61,7 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID, vpnSubnet string
 
 	var buildNodes []profile.BuildNode
 	for _, n := range nodes {
-		if n.WGPublicKey == "" || n.PublicIP == "" {
+		if n.WGPublicKey == "" || len(n.EndpointAddrs()) == 0 {
 			continue // node has not reported its data-plane key yet
 		}
 		psk := profile.GeneratePresharedKey()
@@ -75,7 +79,7 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID, vpnSubnet string
 			ID:           n.ID,
 			Name:         n.Name,
 			Region:       n.Region,
-			Endpoint:     net.JoinHostPort(n.PublicIP, awgPort),
+			EndpointIPs:  n.EndpointAddrs(),
 			WGPublicKey:  n.WGPublicKey,
 			PresharedKey: psk,
 			AllowedIPs:   []string{"0.0.0.0/0", "::/0"},
@@ -86,6 +90,9 @@ func ProvisionDevice(ctx context.Context, db *sql.DB, deviceID, vpnSubnet string
 		User:        device.UserID,
 		DeviceWGKey: keys.PrivateKey,
 		TunnelIP:    tunnelIP,
+		PortMin:     opts.PortMin,
+		PortMax:     opts.PortMax,
+		Rotation:    opts.Rotation,
 		Nodes:       buildNodes,
 	})
 	revision, err := profile.Issue(ctx, db, device.UserID, prof)
