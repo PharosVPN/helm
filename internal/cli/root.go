@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 		newSSHKeyCmd(),
 		newNodesCmd(),
 		newProfileCmd(),
+		newEnrollCmd(),
 		newServeCmd(),
 	)
 	return root
