@@ -3,6 +3,8 @@
 
 package wg
 
+import "fmt"
+
 // Obfuscation is one node's AmneziaWG obfuscation parameter set (DESIGN §3).
 // Every node runs AmneziaWG — there is no plain-WireGuard path — and each node
 // randomises its own values for traffic diversity, so the set is per-node, not
@@ -40,4 +42,34 @@ type Obfuscation struct {
 // the low values), so they are the reliable signal.
 func (o Obfuscation) IsZero() bool {
 	return o.H1 == 0 && o.H2 == 0 && o.H3 == 0 && o.H4 == 0
+}
+
+// Validate checks an obfuscation set against AmneziaWG's structural rules.
+// buoy generates and enforces these on the node; helm re-checks what a node
+// reports so a malformed set is rejected loudly rather than silently producing
+// profiles that cannot handshake.
+func (o Obfuscation) Validate() error {
+	if o.Jmin > o.Jmax {
+		return fmt.Errorf("wg: obfuscation Jmin (%d) exceeds Jmax (%d)", o.Jmin, o.Jmax)
+	}
+	// H1-H4 must be four distinct values, each clear of 1-4 — those are
+	// reserved for AmneziaWG's four standard packet types.
+	hs := [4]uint32{o.H1, o.H2, o.H3, o.H4}
+	for i, h := range hs {
+		if h < 5 {
+			return fmt.Errorf("wg: obfuscation H%d (%d) must be >= 5", i+1, h)
+		}
+		for j := i + 1; j < len(hs); j++ {
+			if h == hs[j] {
+				return fmt.Errorf("wg: obfuscation H%d and H%d collide (%d)", i+1, j+1, h)
+			}
+		}
+	}
+	// An init packet padded by S1 must not be length-indistinguishable from a
+	// response packet padded by S2; the two message types differ by 56 bytes,
+	// so S2 == S1+56 collapses that distinction and awg rejects the config.
+	if o.S2 == o.S1+56 {
+		return fmt.Errorf("wg: obfuscation S2 (%d) must not equal S1+56", o.S2)
+	}
+	return nil
 }
