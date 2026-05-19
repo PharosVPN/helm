@@ -90,6 +90,14 @@ func TestSetNodeAmneziaWG(t *testing.T) {
 	if err := fleet.SetNodeAmneziaWG(ctx, conn, "nod-missing", "k", obf); !errors.Is(err, fleet.ErrNotFound) {
 		t.Fatalf("SetNodeAmneziaWG on missing node: got %v want ErrNotFound", err)
 	}
+
+	// A structurally invalid obfuscation set is rejected at ingest, before
+	// it can land on the node row.
+	bad := obf
+	bad.H4 = bad.H1 // colliding magic headers
+	if err := fleet.SetNodeAmneziaWG(ctx, conn, created.ID, "k", bad); err == nil {
+		t.Fatal("SetNodeAmneziaWG accepted an invalid obfuscation set")
+	}
 }
 
 func TestUpdateNodeOptimisticConcurrency(t *testing.T) {

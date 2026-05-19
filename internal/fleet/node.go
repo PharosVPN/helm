@@ -230,6 +230,11 @@ func DeleteNode(ctx context.Context, db *sql.DB, id string) error {
 // the write is unconditional (no optimistic-version check) but still bumps
 // version and updated_at. A missing row yields ErrNotFound.
 func SetNodeAmneziaWG(ctx context.Context, db *sql.DB, nodeID, publicKey string, obf wg.Obfuscation) error {
+	if !obf.IsZero() {
+		if err := obf.Validate(); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC()
 	res, err := db.ExecContext(ctx,
 		`UPDATE nodes SET wg_public_key = ?, wg_obfuscation = ?,
