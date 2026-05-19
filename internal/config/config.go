@@ -84,6 +84,9 @@ type BeaconConfig struct {
 	// PublicEndpoint is the address clients reach a beacon at — baked into
 	// enrollment tickets so a scanned device knows where to connect.
 	PublicEndpoint string `koanf:"public_endpoint" yaml:"public_endpoint"`
+	// ClientListen is the address the embedded relay binds for caravel mTLS
+	// clients (DESIGN §2) — the data-plane client port.
+	ClientListen string `koanf:"client_listen" yaml:"client_listen"`
 }
 
 // AccountsConfig controls the account & profile-sync service (DESIGN §8).

@@ -4,6 +4,8 @@
 package cli
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 
@@ -12,8 +14,10 @@ import (
 	"github.com/PharosVPN/helm/internal/config"
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/live"
+	"github.com/PharosVPN/helm/internal/pki"
 	"github.com/PharosVPN/helm/internal/profile"
 	"github.com/PharosVPN/helm/internal/provision"
+	"github.com/PharosVPN/helm/internal/relayhost"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +42,16 @@ func newServeCmd() *cobra.Command {
 			// The config password is the source of truth for the fixed admin.
 			if err := auth.SyncConfigAdmin(ctx, conn, cfg.Admin.Password); err != nil {
 				return err
+			}
+
+			// The embedded beacon relay fronts the account/sync gRPC service
+			// (DESIGN §2). A bind failure is non-fatal — the admin plane still
+			// serves; only client sync is unavailable.
+			if cfg.Accounts.Sync && cfg.Beacon.Embedded {
+				if emb := startEmbeddedRelay(ctx, cfg, conn); emb != nil {
+					defer emb.Stop()
+					fmt.Printf("  relay:   mtls://%s (caravel clients)\n", emb.Addr())
+				}
 			}
 
 			dialer, err := newControlDialer(ctx, conn)
@@ -86,4 +100,42 @@ func newServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
 	return cmd
+}
+
+// startEmbeddedRelay issues helm's beacon-tier service certs and brings up the
+// in-process relay fronting the account/sync gRPC service. It returns nil and
+// prints a warning on any failure, so a missing/busy data-plane port never
+// blocks the admin server.
+func startEmbeddedRelay(ctx context.Context, cfg config.Config, conn *sql.DB) *relayhost.Embedded {
+	bundle, _, err := pki.EnsureCA(ctx, conn)
+	if err != nil {
+		fmt.Printf("  warning: embedded relay disabled — load CA: %v\n", err)
+		return nil
+	}
+	grpcCert, err := pki.EnsureServiceCert(ctx, conn, bundle.Fleet, pki.ServiceGRPC)
+	if err != nil {
+		fmt.Printf("  warning: embedded relay disabled — gRPC cert: %v\n", err)
+		return nil
+	}
+	relayCert, err := pki.EnsureServiceCert(ctx, conn, bundle.Fleet, pki.ServiceRelay)
+	if err != nil {
+		fmt.Printf("  warning: embedded relay disabled — relay cert: %v\n", err)
+		return nil
+	}
+	srv, err := relayhost.AccountServer(conn, grpcCert, bundle.Fleet.CertPEM)
+	if err != nil {
+		fmt.Printf("  warning: embedded relay disabled — gRPC server: %v\n", err)
+		return nil
+	}
+	emb, err := relayhost.StartEmbedded(srv, relayhost.EmbeddedConfig{
+		ClientListen: cfg.Beacon.ClientListen,
+		RelayCert:    relayCert,
+		DeviceCAPEM:  bundle.Device.CertPEM,
+		FleetCAPEM:   bundle.Fleet.CertPEM,
+	})
+	if err != nil {
+		fmt.Printf("  warning: embedded relay disabled — %v\n", err)
+		return nil
+	}
+	return emb
 }

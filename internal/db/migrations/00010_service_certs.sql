@@ -1,0 +1,21 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 The PharosVPN Authors
+--
+-- helm's service certificates for the beacon relay tier (M6b-2): the gRPC-leg
+-- server cert (CN "helm-grpc") and the relay cert (one dual-EKU Fleet-CA leaf,
+-- O="PharosVPN Relay"). Both are issued off the Fleet CA; helm holds the keys.
+
+-- +goose Up
+
+CREATE TABLE service_certs (
+    role       TEXT PRIMARY KEY CHECK (role IN ('grpc', 'relay')),
+    cert_pem   TEXT NOT NULL,
+    key_pem    TEXT NOT NULL,
+    serial     TEXT NOT NULL,
+    not_after  TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- +goose Down
+
+DROP TABLE service_certs;
