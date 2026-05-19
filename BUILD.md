@@ -71,6 +71,51 @@ and PKI **must** use these exact values:
 | `helm` gRPC-leg leaf `CN` / backend SNI | `helm-grpc` |
 | Relay certificate | one Fleet-CA leaf, `ServerAuth` + `ClientAuth` EKU |
 
+### Relay enrollment contract (beacon R5)
+
+`helm` enrols a remote `beacon` relay over SSH, exactly as it onboards a `buoy`
+node (DESIGN §5, decision 14 — CSR-over-SSH, **no bootstrap token**). SSH is an
+install/enrol channel only; once enrolled, `helm` reaches the relay solely by
+dialling **out** to its reverse-tunnel listener — the relay opens no path back.
+
+**Binary & on-host layout**
+
+| | |
+|---|---|
+| Binary path | `/usr/local/bin/beacon` |
+| Config / cert dir | `/etc/beacon` |
+| systemd unit | `/etc/systemd/system/beacon.service` — `ExecStart=/usr/local/bin/beacon run --config-dir /etc/beacon` |
+
+**Command surface** — `helm`'s relay-deploy invokes these, mirroring `buoy`:
+
+| Command | Behaviour |
+|---|---|
+| `beacon gen-csr` | Generate the relay keypair **on the host** and print a PKCS#10 CSR (PEM) to stdout. The private key never leaves the host. |
+| `beacon version` | Print the installed version to stdout. |
+| `beacon run --config-dir /etc/beacon` | Run the relay (systemd `ExecStart`). |
+
+**CSR & signing** — `beacon gen-csr` emits a *plain* CSR carrying only the
+public key; its subject and SANs are ignored. `helm` is the sole authority on
+the relay's identity and **overrides** them when it signs off the Fleet CA:
+
+- Subject `O = PharosVPN Relay` — the pinned delegation marker (table above).
+  A relay host may not self-assert it; only `helm` grants it.
+- EKU = `ServerAuth` + `ClientAuth` — one dual-EKU leaf.
+- DNS SAN = the relay's **public client-endpoint hostname**, set by `helm` from
+  the configured `beacon.public_endpoint`. `beacon gen-csr` takes no
+  `--hostname` flag — `helm` owns the hostname.
+
+**Files `helm` pushes back over SSH** after signing:
+
+| Path | Mode | Contents |
+|---|---|---|
+| `/etc/beacon/relay.crt` | 0644 | Relay leaf + Fleet intermediate, in chain order. |
+| `/etc/beacon/fleet-ca.crt` | 0644 | Fleet CA cert — verifies `helm`'s gRPC-leg cert (`BackendTrustPEM`). |
+| `/etc/beacon/device-ca.crt` | 0644 | Device CA cert — verifies caravel client leaves (`ClientTrustPEM`). |
+
+The relay private key stays on the host (`beacon gen-csr` wrote it next to the
+config dir); `helm` never sees it.
+
 ## Non-negotiables
 
 - No inbound ports. All node/relay connections are helm-initiated.
