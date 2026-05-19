@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PharosVPN/helm/internal/fleet"
+	"github.com/PharosVPN/helm/internal/wg"
 )
 
 func TestNodeCRUD(t *testing.T) {
@@ -47,6 +48,47 @@ func TestNodeCRUD(t *testing.T) {
 	}
 	if _, err := fleet.GetNode(ctx, conn, created.ID); !errors.Is(err, fleet.ErrNotFound) {
 		t.Fatalf("GetNode after delete: got %v want ErrNotFound", err)
+	}
+}
+
+func TestSetNodeAmneziaWG(t *testing.T) {
+	conn := newDB(t)
+	ctx := context.Background()
+
+	created, err := fleet.CreateNode(ctx, conn, fleet.Node{Name: "ams-1", Region: "eu"})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	// A fresh node has reported no data-plane config yet.
+	if !created.Obfuscation.IsZero() || created.WGPublicKey != "" {
+		t.Fatalf("new node already has AmneziaWG config: %+v", created)
+	}
+
+	obf := wg.Obfuscation{
+		Jc: 4, Jmin: 40, Jmax: 70, S1: 30, S2: 45, S3: 60, S4: 75,
+		H1: 1515448789, H2: 2406647629, H3: 3604601557, H4: 1124628755,
+		I1: "<b 0x00000000>",
+	}
+	if err := fleet.SetNodeAmneziaWG(ctx, conn, created.ID, "node-wg-pub-key", obf); err != nil {
+		t.Fatalf("SetNodeAmneziaWG: %v", err)
+	}
+
+	got, err := fleet.GetNode(ctx, conn, created.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.WGPublicKey != "node-wg-pub-key" {
+		t.Errorf("wg public key: got %q", got.WGPublicKey)
+	}
+	if got.Obfuscation != obf {
+		t.Errorf("obfuscation round trip: got %+v want %+v", got.Obfuscation, obf)
+	}
+	if got.Version != created.Version+1 {
+		t.Errorf("version: got %d want %d", got.Version, created.Version+1)
+	}
+
+	if err := fleet.SetNodeAmneziaWG(ctx, conn, "nod-missing", "k", obf); !errors.Is(err, fleet.ErrNotFound) {
+		t.Fatalf("SetNodeAmneziaWG on missing node: got %v want ErrNotFound", err)
 	}
 }
 

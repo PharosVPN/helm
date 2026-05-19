@@ -3,7 +3,11 @@
 
 package profile
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/PharosVPN/helm/internal/wg"
+)
 
 // ProtocolVersionAmneziaWG is the version tag for amneziawg protocol blocks.
 const ProtocolVersionAmneziaWG = 2
@@ -34,6 +38,9 @@ type BuildNode struct {
 	// PresharedKey is the per-(device,node) 256-bit PSK (decision 15).
 	PresharedKey string
 	AllowedIPs   []string
+	// Obfuscation is the node's AmneziaWG obfuscation parameter set — the
+	// client must apply the exact values to handshake (DESIGN §3).
+	Obfuscation wg.Obfuscation
 }
 
 // BuildInput is everything needed to assemble a device's profile.
@@ -57,6 +64,8 @@ type amneziaWGParams struct {
 	Endpoints    []EndpointPool `json:"endpoints"`
 	Rotation     RotationPolicy `json:"rotation"`
 	AllowedIPs   []string       `json:"allowed_ips"`
+	// Obfuscation is the node's AmneziaWG obfuscation parameter set.
+	Obfuscation wg.Obfuscation `json:"obfuscation"`
 }
 
 // Build assembles a populated Profile from a device's peers. Revision and
@@ -78,6 +87,7 @@ func Build(in BuildInput) Profile {
 			Endpoints:    pool,
 			Rotation:     in.Rotation,
 			AllowedIPs:   n.AllowedIPs,
+			Obfuscation:  n.Obfuscation,
 		})
 		p.Nodes = append(p.Nodes, Node{
 			ID:        n.ID,

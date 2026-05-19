@@ -12,11 +12,22 @@ import (
 	"time"
 
 	"github.com/PharosVPN/helm/internal/config"
+	"github.com/PharosVPN/helm/internal/control"
 	"github.com/PharosVPN/helm/internal/deploy"
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/pki"
+	"github.com/PharosVPN/helm/internal/wg"
 	"github.com/spf13/cobra"
 )
+
+// obfNote describes whether a node also reported obfuscation parameters, for
+// the `nodes status` summary line.
+func obfNote(o wg.Obfuscation) string {
+	if o.IsZero() {
+		return " (obfuscation not reported)"
+	}
+	return " + obfuscation"
+}
 
 // controlRPCTimeout bounds a single control-plane RPC.
 const controlRPCTimeout = 10 * time.Second
@@ -89,6 +100,16 @@ func newNodesStatusCmd() *cobra.Command {
 				proto := strings.TrimPrefix(svc.GetProtocol().String(), "PROTOCOL_")
 				fmt.Printf("    %-14s running=%t listening=%t peers=%d\n",
 					proto, svc.GetRunning(), svc.GetListening(), svc.GetPeerCount())
+			}
+
+			// Persist the AmneziaWG identity buoy reports — its public key and
+			// per-node obfuscation. Provisioning needs both before it can place
+			// a device on the node (DESIGN §3).
+			if pubKey, obf := control.AmneziaWGFromStatus(status); pubKey != "" {
+				if err := fleet.SetNodeAmneziaWG(ctx, conn, node.ID, pubKey, obf); err != nil {
+					return fmt.Errorf("record amneziawg identity: %w", err)
+				}
+				fmt.Printf("  amneziawg     public key recorded%s\n", obfNote(obf))
 			}
 			return nil
 		},

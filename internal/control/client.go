@@ -7,6 +7,7 @@ import (
 	"context"
 
 	buoyv1 "github.com/PharosVPN/helm/internal/gen/pharos/buoy/v1"
+	"github.com/PharosVPN/helm/internal/wg"
 	"google.golang.org/grpc"
 )
 
@@ -23,6 +24,26 @@ func (c *Client) Close() error { return c.cc.Close() }
 // Status reports node and per-protocol service health.
 func (c *Client) Status(ctx context.Context) (*buoyv1.GetStatusResponse, error) {
 	return c.rpc.GetStatus(ctx, &buoyv1.GetStatusRequest{})
+}
+
+// AmneziaWGFromStatus extracts the AmneziaWG server identity a node reported
+// in a GetStatus response — its public key and obfuscation parameter set. It
+// returns zero values when the node has not yet configured its data plane.
+func AmneziaWGFromStatus(s *buoyv1.GetStatusResponse) (publicKey string, obf wg.Obfuscation) {
+	info := s.GetAmneziawg()
+	if info == nil {
+		return "", wg.Obfuscation{}
+	}
+	o := info.GetObfuscation()
+	if o == nil {
+		return info.GetPublicKey(), wg.Obfuscation{}
+	}
+	return info.GetPublicKey(), wg.Obfuscation{
+		Jc: o.GetJc(), Jmin: o.GetJmin(), Jmax: o.GetJmax(),
+		S1: o.GetS1(), S2: o.GetS2(), S3: o.GetS3(), S4: o.GetS4(),
+		H1: o.GetH1(), H2: o.GetH2(), H3: o.GetH3(), H4: o.GetH4(),
+		I1: o.GetI1(), I2: o.GetI2(), I3: o.GetI3(), I4: o.GetI4(), I5: o.GetI5(),
+	}
 }
 
 // Metrics reports the node's counters for a metrics sample.

@@ -6,12 +6,14 @@ package fleet
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/PharosVPN/helm/internal/idgen"
+	"github.com/PharosVPN/helm/internal/wg"
 )
 
 // Node lifecycle states.
@@ -47,6 +49,9 @@ type Node struct {
 	AgentVersion string
 	// WGPublicKey is the node's AmneziaWG server public key, reported by buoy.
 	WGPublicKey string
+	// Obfuscation is the node's per-node AmneziaWG obfuscation parameter set,
+	// reported by buoy alongside WGPublicKey (DESIGN §3). Zero until reported.
+	Obfuscation wg.Obfuscation
 	// Forwarding, Masquerade, Isolation are the node's network policy
 	// (DESIGN §3, decision 16), set per node from the admin UI.
 	Forwarding bool
@@ -60,8 +65,30 @@ type Node struct {
 
 const nodeColumns = `id, name, region, public_ip, endpoint_ips, control_addr, cloud_id,
 	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version, wg_public_key,
-	forwarding, masquerade, isolation,
+	wg_obfuscation, forwarding, masquerade, isolation,
 	status, version, created_at, updated_at`
+
+// marshalObfuscation encodes an obfuscation set for the wg_obfuscation column.
+// A zero set stores as the empty string ("not reported yet").
+func marshalObfuscation(o wg.Obfuscation) string {
+	if o.IsZero() {
+		return ""
+	}
+	b, _ := json.Marshal(o)
+	return string(b)
+}
+
+// unmarshalObfuscation decodes a wg_obfuscation column value.
+func unmarshalObfuscation(s string) (wg.Obfuscation, error) {
+	var o wg.Obfuscation
+	if s == "" {
+		return o, nil
+	}
+	if err := json.Unmarshal([]byte(s), &o); err != nil {
+		return wg.Obfuscation{}, fmt.Errorf("decode node obfuscation: %w", err)
+	}
+	return o, nil
+}
 
 // EndpointAddrs returns the node's endpoint IP pool, falling back to the
 // primary public IP when no pool is configured.
@@ -105,10 +132,10 @@ func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO nodes (`+nodeColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Region, n.PublicIP, joinIPs(n.EndpointIPs), n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
-		n.Forwarding, n.Masquerade, n.Isolation,
+		marshalObfuscation(n.Obfuscation), n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		return Node{}, fmt.Errorf("create node: %w", err)
@@ -155,12 +182,12 @@ func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 		`UPDATE nodes SET name = ?, region = ?, public_ip = ?, endpoint_ips = ?,
 		        control_addr = ?, cloud_id = ?, ssh_host = ?, ssh_user = ?,
 		        ssh_port = ?, ssh_host_key = ?, agent_version = ?, wg_public_key = ?,
-		        forwarding = ?, masquerade = ?, isolation = ?, status = ?,
-		        version = version + 1, updated_at = ?
+		        wg_obfuscation = ?, forwarding = ?, masquerade = ?, isolation = ?,
+		        status = ?, version = version + 1, updated_at = ?
 		 WHERE id = ? AND version = ?`,
 		n.Name, n.Region, n.PublicIP, joinIPs(n.EndpointIPs), n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
-		n.Forwarding, n.Masquerade, n.Isolation,
+		marshalObfuscation(n.Obfuscation), n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, now, n.ID, n.Version)
 	if err != nil {
 		return Node{}, fmt.Errorf("update node: %w", err)
@@ -197,18 +224,47 @@ func DeleteNode(ctx context.Context, db *sql.DB, id string) error {
 	return nil
 }
 
+// SetNodeAmneziaWG records the AmneziaWG server identity buoy reported for a
+// node — its public key and obfuscation parameter set. helm calls this when it
+// learns the values from a node's GetStatus; buoy is the source of truth, so
+// the write is unconditional (no optimistic-version check) but still bumps
+// version and updated_at. A missing row yields ErrNotFound.
+func SetNodeAmneziaWG(ctx context.Context, db *sql.DB, nodeID, publicKey string, obf wg.Obfuscation) error {
+	now := time.Now().UTC()
+	res, err := db.ExecContext(ctx,
+		`UPDATE nodes SET wg_public_key = ?, wg_obfuscation = ?,
+		        version = version + 1, updated_at = ?
+		 WHERE id = ?`,
+		publicKey, marshalObfuscation(obf), now, nodeID)
+	if err != nil {
+		return fmt.Errorf("set node amneziawg: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func scanNode(s rowScanner) (Node, error) {
 	var (
 		n           Node
 		endpointIPs string
+		obfuscation string
 	)
 	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &endpointIPs, &n.ControlAddr,
 		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
-		&n.AgentVersion, &n.WGPublicKey, &n.Forwarding, &n.Masquerade, &n.Isolation,
+		&n.AgentVersion, &n.WGPublicKey, &obfuscation, &n.Forwarding, &n.Masquerade, &n.Isolation,
 		&n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Node{}, err
 	}
 	n.EndpointIPs = splitIPs(endpointIPs)
+	if n.Obfuscation, err = unmarshalObfuscation(obfuscation); err != nil {
+		return Node{}, err
+	}
 	return n, nil
 }

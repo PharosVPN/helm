@@ -20,9 +20,41 @@ import (
 	"github.com/PharosVPN/helm/internal/db"
 	buoyv1 "github.com/PharosVPN/helm/internal/gen/pharos/buoy/v1"
 	"github.com/PharosVPN/helm/internal/pki"
+	"github.com/PharosVPN/helm/internal/wg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
+
+func TestAmneziaWGFromStatus(t *testing.T) {
+	// A status with no AmneziaWG block — node has not configured its data
+	// plane yet.
+	if pk, obf := control.AmneziaWGFromStatus(&buoyv1.GetStatusResponse{}); pk != "" || !obf.IsZero() {
+		t.Errorf("empty status: got (%q, %+v)", pk, obf)
+	}
+
+	status := &buoyv1.GetStatusResponse{
+		Amneziawg: &buoyv1.AmneziaWGInfo{
+			PublicKey: "node-wg-pub",
+			Obfuscation: &buoyv1.AmneziaWGObfuscation{
+				Jc: 4, Jmin: 40, Jmax: 70, S1: 30, S2: 45, S3: 60, S4: 75,
+				H1: 1515448789, H2: 2406647629, H3: 3604601557, H4: 1124628755,
+				I1: "<b 0x00000000>",
+			},
+		},
+	}
+	pk, obf := control.AmneziaWGFromStatus(status)
+	if pk != "node-wg-pub" {
+		t.Errorf("public key: got %q", pk)
+	}
+	want := wg.Obfuscation{
+		Jc: 4, Jmin: 40, Jmax: 70, S1: 30, S2: 45, S3: 60, S4: 75,
+		H1: 1515448789, H2: 2406647629, H3: 3604601557, H4: 1124628755,
+		I1: "<b 0x00000000>",
+	}
+	if obf != want {
+		t.Errorf("obfuscation: got %+v want %+v", obf, want)
+	}
+}
 
 // fakeNode is a minimal NodeControl server for exercising the control client.
 type fakeNode struct {
