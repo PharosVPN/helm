@@ -29,6 +29,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newSSHKeyCmd(),
 		newNodesCmd(),
+		newRelaysCmd(),
 		newProfileCmd(),
 		newEnrollCmd(),
 		newServeCmd(),

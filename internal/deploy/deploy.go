@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 The PharosVPN Authors
 
-// Package deploy onboards buoy nodes over SSH (DESIGN §5): it installs the
-// agent, signs its certificate request, and starts it. SSH is used only to
-// install and update the agent — all node control is gRPC.
+// Package deploy onboards buoy nodes and beacon relays over SSH (DESIGN §5):
+// it installs the agent, signs its certificate request, and starts it. SSH is
+// used only to install and update the agent — all node control is gRPC, and a
+// relay is reached by dialling out to its reverse tunnel.
 package deploy
 
 import (
@@ -139,7 +140,7 @@ func AddNode(ctx context.Context, db *sql.DB, remote Remote, bundle pki.Bundle, 
 
 // onboard runs the install/sign/start sequence against an existing node record.
 func onboard(ctx context.Context, db *sql.DB, remote Remote, bundle pki.Bundle, node *fleet.Node, p AddParams) (AddResult, error) {
-	if err := installBinary(ctx, remote, p.Install); err != nil {
+	if err := installBinary(ctx, remote, p.Install, buoyBinaryPath); err != nil {
 		return AddResult{}, err
 	}
 
@@ -183,7 +184,7 @@ func onboard(ctx context.Context, db *sql.DB, remote Remote, bundle pki.Bundle, 
 		return AddResult{}, fmt.Errorf("deploy: start buoy service: %w", err)
 	}
 
-	agentVersion := readAgentVersion(ctx, remote)
+	agentVersion := readVersion(ctx, remote, cmdVersion)
 
 	node.ControlAddr = net.JoinHostPort(p.SSHHost, strconv.Itoa(ControlPort))
 	node.AgentVersion = agentVersion
@@ -201,13 +202,13 @@ func UpdateAgent(ctx context.Context, db *sql.DB, remote Remote, node fleet.Node
 	if err := spec.validate(); err != nil {
 		return fleet.Node{}, err
 	}
-	if err := installBinary(ctx, remote, spec); err != nil {
+	if err := installBinary(ctx, remote, spec, buoyBinaryPath); err != nil {
 		return fleet.Node{}, err
 	}
 	if _, err := remote.Run(ctx, "systemctl restart buoy", nil); err != nil {
 		return fleet.Node{}, fmt.Errorf("deploy: restart buoy: %w", err)
 	}
-	node.AgentVersion = readAgentVersion(ctx, remote)
+	node.AgentVersion = readVersion(ctx, remote, cmdVersion)
 	return fleet.UpdateNode(ctx, db, node)
 }
 
@@ -225,21 +226,21 @@ func Service(ctx context.Context, remote Remote, action string) error {
 	return nil
 }
 
-func installBinary(ctx context.Context, remote Remote, spec InstallSpec) error {
+func installBinary(ctx context.Context, remote Remote, spec InstallSpec, binaryPath string) error {
 	if len(spec.Binary) > 0 {
-		return remote.Upload(ctx, buoyBinaryPath, spec.Binary, 0o755)
+		return remote.Upload(ctx, binaryPath, spec.Binary, 0o755)
 	}
 	cmd := fmt.Sprintf("curl -fsSL %s -o %s && chmod +x %s",
-		shellQuote(spec.URL), buoyBinaryPath, buoyBinaryPath)
+		shellQuote(spec.URL), binaryPath, binaryPath)
 	if _, err := remote.Run(ctx, cmd, nil); err != nil {
-		return fmt.Errorf("deploy: download buoy: %w", err)
+		return fmt.Errorf("deploy: download binary: %w", err)
 	}
 	return nil
 }
 
-// readAgentVersion best-effort reads the installed buoy version.
-func readAgentVersion(ctx context.Context, remote Remote) string {
-	out, err := remote.Run(ctx, cmdVersion, nil)
+// readVersion best-effort reads an installed agent's version via versionCmd.
+func readVersion(ctx context.Context, remote Remote, versionCmd string) string {
+	out, err := remote.Run(ctx, versionCmd, nil)
 	if err != nil {
 		return ""
 	}

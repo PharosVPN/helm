@@ -69,6 +69,81 @@ func TestSignNodeCSRChains(t *testing.T) {
 	}
 }
 
+func TestSignRelayCSR(t *testing.T) {
+	b, err := pki.GenerateBundle()
+	if err != nil {
+		t.Fatalf("GenerateBundle: %v", err)
+	}
+
+	signed, err := pki.SignRelayCSR(b.Fleet, makeCSR(t, "ignored-subject"), "beacon.example.net")
+	if err != nil {
+		t.Fatalf("SignRelayCSR: %v", err)
+	}
+
+	// helm dictates the relay identity — the CSR's subject is ignored.
+	if cn := signed.Cert.Subject.CommonName; cn != "PharosVPN Relay" {
+		t.Errorf("subject CN: got %q want PharosVPN Relay", cn)
+	}
+	if orgs := signed.Cert.Subject.Organization; len(orgs) != 1 || orgs[0] != "PharosVPN Relay" {
+		t.Errorf("subject O: got %v want [PharosVPN Relay]", orgs)
+	}
+	// One dual-EKU leaf — server (public + tunnel listeners) and client
+	// (backend gRPC leg).
+	hasServer, hasClient := false, false
+	for _, eku := range signed.Cert.ExtKeyUsage {
+		switch eku {
+		case x509.ExtKeyUsageServerAuth:
+			hasServer = true
+		case x509.ExtKeyUsageClientAuth:
+			hasClient = true
+		}
+	}
+	if !hasServer || !hasClient {
+		t.Errorf("EKU: server=%t client=%t, want both", hasServer, hasClient)
+	}
+	// The hostname helm passed — not the CSR's — is the SAN.
+	if len(signed.Cert.DNSNames) != 1 || signed.Cert.DNSNames[0] != "beacon.example.net" {
+		t.Errorf("DNS SAN: got %v want [beacon.example.net]", signed.Cert.DNSNames)
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(b.Root.Cert)
+	inter := x509.NewCertPool()
+	inter.AddCert(b.Fleet.Cert)
+	if _, err := signed.Cert.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: inter,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		t.Fatalf("relay cert does not chain root->fleet->leaf: %v", err)
+	}
+
+	// An IP hostname lands as an IP SAN, not a DNS SAN.
+	ipSigned, err := pki.SignRelayCSR(b.Fleet, makeCSR(t, "x"), "198.51.100.9")
+	if err != nil {
+		t.Fatalf("SignRelayCSR (ip): %v", err)
+	}
+	if len(ipSigned.Cert.IPAddresses) != 1 || len(ipSigned.Cert.DNSNames) != 0 {
+		t.Errorf("IP hostname SAN: ips=%v dns=%v", ipSigned.Cert.IPAddresses, ipSigned.Cert.DNSNames)
+	}
+}
+
+func TestSignRelayCSRRejectsBadInput(t *testing.T) {
+	b, err := pki.GenerateBundle()
+	if err != nil {
+		t.Fatalf("GenerateBundle: %v", err)
+	}
+	if _, err := pki.SignRelayCSR(b.Root, makeCSR(t, "x"), "h"); err == nil {
+		t.Error("expected SignRelayCSR to reject a non-Fleet CA")
+	}
+	if _, err := pki.SignRelayCSR(b.Fleet, makeCSR(t, "x"), ""); err == nil {
+		t.Error("expected SignRelayCSR to reject an empty hostname")
+	}
+	if _, err := pki.SignRelayCSR(b.Fleet, []byte("not a pem"), "h"); err == nil {
+		t.Error("expected SignRelayCSR to reject non-PEM input")
+	}
+}
+
 func TestSignNodeCSRRejectsNonFleetCA(t *testing.T) {
 	b, err := pki.GenerateBundle()
 	if err != nil {
