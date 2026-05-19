@@ -81,6 +81,9 @@ type BeaconConfig struct {
 	Embedded bool `koanf:"embedded" yaml:"embedded"`
 	// Remote enables dialing out to remote beacon relays over a reverse tunnel.
 	Remote bool `koanf:"remote" yaml:"remote"`
+	// PublicEndpoint is the address clients reach a beacon at — baked into
+	// enrollment tickets so a scanned device knows where to connect.
+	PublicEndpoint string `koanf:"public_endpoint" yaml:"public_endpoint"`
 }
 
 // AccountsConfig controls the account & profile-sync service (DESIGN §8).
