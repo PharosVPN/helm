@@ -35,6 +35,23 @@ export interface LiveEvent {
 	message?: string;
 }
 
+export interface Device {
+	id: string;
+	user_id: string;
+	name: string;
+	platform: string;
+	status: string;
+	version: number;
+	created_at: string;
+}
+
+export interface ProvisionResult {
+	device_id: string;
+	tunnel_ip: string;
+	peer_count: number;
+	profile_revision: number;
+}
+
 export interface ApiError {
 	status: number;
 	message: string;

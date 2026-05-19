@@ -20,6 +20,7 @@ import (
 	"github.com/PharosVPN/helm/internal/db"
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/live"
+	"github.com/PharosVPN/helm/internal/provision"
 )
 
 const testAdminPassword = "test-admin-password"
@@ -40,7 +41,9 @@ func setup(t *testing.T) (*httptest.Server, *http.Client, *sql.DB) {
 		t.Fatalf("SyncConfigAdmin: %v", err)
 	}
 
-	srv := NewServer("", conn, live.NewHub())
+	srv := NewServer("", conn, live.NewHub(), provision.Options{
+		VPNSubnet: "10.86.0.0/16", PortMin: 2000, PortMax: 60000,
+	})
 	ts := httptest.NewServer(srv.http.Handler)
 	t.Cleanup(ts.Close)
 
@@ -233,6 +236,58 @@ func TestNetworkPolicyPreview(t *testing.T) {
 	bad.Body.Close()
 	if bad.StatusCode != http.StatusBadRequest {
 		t.Errorf("invalid policy: status %d want 400", bad.StatusCode)
+	}
+}
+
+func TestDevicesAndProvision(t *testing.T) {
+	ts, client, _ := setup(t)
+	login(t, ts, client)
+
+	uResp, err := client.Post(ts.URL+"/api/users", "application/json",
+		strings.NewReader(`{"email":"u@example.com","password":"longenough"}`))
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	var user userView
+	json.NewDecoder(uResp.Body).Decode(&user) //nolint:errcheck
+	uResp.Body.Close()
+
+	dResp, err := client.Post(ts.URL+"/api/users/"+user.ID+"/devices", "application/json",
+		strings.NewReader(`{"name":"phone","platform":"android"}`))
+	if err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	var device deviceView
+	json.NewDecoder(dResp.Body).Decode(&device) //nolint:errcheck
+	dResp.Body.Close()
+	if dResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create device: status %d", dResp.StatusCode)
+	}
+
+	listResp, err := client.Get(ts.URL + "/api/users/" + user.ID + "/devices")
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	var devices []deviceView
+	json.NewDecoder(listResp.Body).Decode(&devices) //nolint:errcheck
+	listResp.Body.Close()
+	if len(devices) != 1 {
+		t.Fatalf("devices: got %d want 1", len(devices))
+	}
+
+	// Provisioning a device whose user has no encryption key is a 409.
+	pResp, err := client.Post(ts.URL+"/api/devices/"+device.ID+"/provision",
+		"application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	pResp.Body.Close()
+	if pResp.StatusCode != http.StatusConflict {
+		t.Errorf("provision without keys: status %d want 409", pResp.StatusCode)
+	}
+
+	if code := deleteReq(t, client, ts.URL+"/api/devices/"+device.ID); code != http.StatusNoContent {
+		t.Errorf("delete device: status %d want 204", code)
 	}
 }
 
