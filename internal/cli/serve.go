@@ -44,13 +44,17 @@ func newServeCmd() *cobra.Command {
 				return err
 			}
 
-			// The embedded beacon relay fronts the account/sync gRPC service
-			// (DESIGN §2). A bind failure is non-fatal — the admin plane still
-			// serves; only client sync is unavailable.
-			if cfg.Accounts.Sync && cfg.Beacon.Embedded {
-				if emb := startEmbeddedRelay(ctx, cfg, conn); emb != nil {
-					defer emb.Stop()
-					fmt.Printf("  relay:   mtls://%s (caravel clients)\n", emb.Addr())
+			// The beacon relay tier fronts the account/sync gRPC service
+			// (DESIGN §2): an in-process relay and/or reverse tunnels out to
+			// remote beacons. Relay failures are non-fatal — the admin plane
+			// still serves; only client sync is unavailable.
+			remotes := []string(nil)
+			if cfg.Beacon.Remote {
+				remotes = cfg.Beacon.RemoteEndpoints
+			}
+			if cfg.Accounts.Sync && (cfg.Beacon.Embedded || len(remotes) > 0) {
+				if stop := startBeaconRelay(ctx, cfg, conn, remotes); stop != nil {
+					defer stop()
 				}
 			}
 
@@ -102,40 +106,78 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
-// startEmbeddedRelay issues helm's beacon-tier service certs and brings up the
-// in-process relay fronting the account/sync gRPC service. It returns nil and
-// prints a warning on any failure, so a missing/busy data-plane port never
-// blocks the admin server.
-func startEmbeddedRelay(ctx context.Context, cfg config.Config, conn *sql.DB) *relayhost.Embedded {
+// startBeaconRelay issues helm's beacon-tier service certs and brings up the
+// relay tier behind the account/sync gRPC service: the in-process relay (when
+// beacon.embedded) and a reverse tunnel to each remote beacon. It returns a
+// stop func, or nil if nothing started. Any failure prints a warning and is
+// non-fatal, so a missing data-plane port never blocks the admin server.
+func startBeaconRelay(ctx context.Context, cfg config.Config, conn *sql.DB, remotes []string) (stop func()) {
 	bundle, _, err := pki.EnsureCA(ctx, conn)
 	if err != nil {
-		fmt.Printf("  warning: embedded relay disabled — load CA: %v\n", err)
+		fmt.Printf("  warning: beacon relay disabled — load CA: %v\n", err)
 		return nil
 	}
 	grpcCert, err := pki.EnsureServiceCert(ctx, conn, bundle.Fleet, pki.ServiceGRPC)
 	if err != nil {
-		fmt.Printf("  warning: embedded relay disabled — gRPC cert: %v\n", err)
+		fmt.Printf("  warning: beacon relay disabled — gRPC cert: %v\n", err)
 		return nil
 	}
 	relayCert, err := pki.EnsureServiceCert(ctx, conn, bundle.Fleet, pki.ServiceRelay)
 	if err != nil {
-		fmt.Printf("  warning: embedded relay disabled — relay cert: %v\n", err)
+		fmt.Printf("  warning: beacon relay disabled — relay cert: %v\n", err)
 		return nil
 	}
 	srv, err := relayhost.AccountServer(conn, grpcCert, bundle.Fleet.CertPEM)
 	if err != nil {
-		fmt.Printf("  warning: embedded relay disabled — gRPC server: %v\n", err)
+		fmt.Printf("  warning: beacon relay disabled — gRPC server: %v\n", err)
 		return nil
 	}
-	emb, err := relayhost.StartEmbedded(srv, relayhost.EmbeddedConfig{
-		ClientListen: cfg.Beacon.ClientListen,
-		RelayCert:    relayCert,
-		DeviceCAPEM:  bundle.Device.CertPEM,
-		FleetCAPEM:   bundle.Fleet.CertPEM,
-	})
-	if err != nil {
-		fmt.Printf("  warning: embedded relay disabled — %v\n", err)
+
+	// The embedded relay binds a public listener; remote relays are dialed
+	// out to. The same gRPC server backs both.
+	var emb *relayhost.Embedded
+	if cfg.Beacon.Embedded {
+		emb, err = relayhost.StartEmbedded(srv, relayhost.EmbeddedConfig{
+			ClientListen: cfg.Beacon.ClientListen,
+			RelayCert:    relayCert,
+			DeviceCAPEM:  bundle.Device.CertPEM,
+			FleetCAPEM:   bundle.Fleet.CertPEM,
+		})
+		if err != nil {
+			fmt.Printf("  warning: embedded relay disabled — %v\n", err)
+			emb = nil
+		} else {
+			fmt.Printf("  relay:   mtls://%s (embedded, caravel clients)\n", emb.Addr())
+		}
+	}
+
+	var wg sync.WaitGroup
+	dialed := 0
+	for _, ep := range remotes {
+		if ep == "" {
+			continue
+		}
+		dialed++
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			if err := relayhost.RunRemote(ctx, srv, addr, relayCert, bundle.Fleet.CertPEM); err != nil && ctx.Err() == nil {
+				fmt.Printf("  warning: remote relay %s stopped: %v\n", addr, err)
+			}
+		}(ep)
+		fmt.Printf("  relay:   reverse tunnel to remote beacon %s\n", ep)
+	}
+
+	if emb == nil && dialed == 0 {
+		srv.Stop()
 		return nil
 	}
-	return emb
+	return func() {
+		if emb != nil {
+			emb.Stop()
+		} else {
+			srv.Stop()
+		}
+		wg.Wait()
+	}
 }
