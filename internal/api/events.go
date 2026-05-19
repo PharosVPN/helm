@@ -22,7 +22,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer c.CloseNow()
+	defer func() { _ = c.CloseNow() }()
 
 	// CloseRead drains client frames and cancels ctx when the browser leaves.
 	ctx := c.CloseRead(r.Context())
