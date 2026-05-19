@@ -40,7 +40,12 @@ is a working single-controller version. Port forward, do not copy blindly:
 | M4 | Live plane | consume `buoy` event stream; WebSocket fan-out to admin browsers |
 | M5 | Admin UI | SvelteKit SPA, auth, fleet/users/peers/admins screens, optimistic concurrency (409 on stale write) |
 | M6 | Accounts & sync | users as auth principals + roles; E2E profile encryption (§8); embedded `beacon`; remote-`beacon` reverse-tunnel dialer |
-| M7 | Distribution | `.pharos` export (all `enc` modes), enrollment-ticket QR, Amnezia-compat `.vpn` export |
+| M7 | Distribution | `.pharos` export (all `enc` modes), enrollment-ticket QR |
+
+> The Amnezia-compat `.vpn` export originally planned for M7 was dropped: a
+> `.vpn` file embeds the device's WireGuard private key in plaintext, which is
+> incompatible with helm's E2E "ciphertext only" guarantee (§8). `caravel`
+> consumes `.pharos` profiles directly.
 
 ## Contracts `helm` owns
 
