@@ -19,7 +19,12 @@ import (
 	"github.com/PharosVPN/helm/internal/provision"
 )
 
-const subnet = "10.86.0.0/16"
+var opts = provision.Options{
+	VPNSubnet: "10.86.0.0/16",
+	PortMin:   2000,
+	PortMax:   60000,
+	Rotation:  profile.RotationPolicy{Enabled: true, IntervalSeconds: 600, JitterSeconds: 120},
+}
 
 func newDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -79,7 +84,7 @@ func TestProvisionDevice(t *testing.T) {
 		}
 	}
 
-	res, err := provision.ProvisionDevice(ctx, conn, device.ID, subnet)
+	res, err := provision.ProvisionDevice(ctx, conn, device.ID, opts)
 	if err != nil {
 		t.Fatalf("ProvisionDevice: %v", err)
 	}
@@ -131,16 +136,25 @@ func TestProvisionDevice(t *testing.T) {
 	if proto.Type != profile.ProtocolAmneziaWG {
 		t.Errorf("protocol type: got %q", proto.Type)
 	}
-	// The amneziawg params must carry the device's private key.
+	// The amneziawg params carry the device key, the endpoint pool, and the
+	// rotation policy (decision 17).
 	var params struct {
-		PrivateKey string `json:"private_key"`
-		PublicKey  string `json:"public_key"`
+		PrivateKey string                 `json:"private_key"`
+		PublicKey  string                 `json:"public_key"`
+		Endpoints  []profile.EndpointPool `json:"endpoints"`
+		Rotation   profile.RotationPolicy `json:"rotation"`
 	}
 	if err := json.Unmarshal(proto.Params, &params); err != nil {
 		t.Fatalf("unmarshal params: %v", err)
 	}
 	if params.PrivateKey == "" || params.PublicKey == "" {
 		t.Errorf("amneziawg params incomplete: %+v", params)
+	}
+	if len(params.Endpoints) != 1 || params.Endpoints[0].PortMin != 2000 || params.Endpoints[0].PortMax != 60000 {
+		t.Errorf("endpoint pool: got %+v", params.Endpoints)
+	}
+	if !params.Rotation.Enabled || params.Rotation.IntervalSeconds != 600 {
+		t.Errorf("rotation policy not carried: %+v", params.Rotation)
 	}
 }
 
@@ -161,7 +175,7 @@ func TestAllocateDeviceIPSequential(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateDevice: %v", err)
 		}
-		res, err := provision.ProvisionDevice(ctx, conn, d.ID, subnet)
+		res, err := provision.ProvisionDevice(ctx, conn, d.ID, opts)
 		if err != nil {
 			t.Fatalf("ProvisionDevice: %v", err)
 		}
