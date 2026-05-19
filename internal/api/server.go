@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PharosVPN/helm/internal/live"
+	"github.com/PharosVPN/helm/internal/provision"
 )
 
 const (
@@ -24,14 +25,16 @@ const (
 
 // Server is the admin HTTP server.
 type Server struct {
-	db   *sql.DB
-	hub  *live.Hub
-	http *http.Server
+	db       *sql.DB
+	hub      *live.Hub
+	provOpts provision.Options
+	http     *http.Server
 }
 
 // NewServer builds the admin server bound to addr (a localhost address).
-func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
-	s := &Server{db: db, hub: hub}
+// provOpts carries the fleet settings device provisioning needs.
+func NewServer(addr string, db *sql.DB, hub *live.Hub, provOpts provision.Options) *Server {
+	s := &Server{db: db, hub: hub, provOpts: provOpts}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -59,6 +62,12 @@ func NewServer(addr string, db *sql.DB, hub *live.Hub) *Server {
 	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
+
+	// Devices and provisioning.
+	mux.HandleFunc("GET /api/users/{id}/devices", s.requireAuth(s.handleListDevices))
+	mux.HandleFunc("POST /api/users/{id}/devices", s.requireAuth(s.handleCreateDevice))
+	mux.HandleFunc("DELETE /api/devices/{id}", s.requireAuth(s.handleDeleteDevice))
+	mux.HandleFunc("POST /api/devices/{id}/provision", s.requireAuth(s.handleProvisionDevice))
 
 	// Live events — auth-gated (closes the M4 gap).
 	mux.HandleFunc("GET /ws/events", s.requireAuth(s.handleEvents))

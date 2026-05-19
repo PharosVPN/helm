@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { api, errorMessage } from '$lib/api';
 	import Modal from '$lib/components/Modal.svelte';
-	import type { User } from '$lib/types';
+	import type { User, Device, ProvisionResult } from '$lib/types';
 
 	let users = $state<User[]>([]);
 	let loading = $state(true);
@@ -19,6 +19,16 @@
 	let deleting = $state<User | null>(null);
 	let deleteError = $state('');
 	let deleteBusy = $state(false);
+
+	// Device management for one user.
+	let devicesFor = $state<User | null>(null);
+	let deviceList = $state<Device[]>([]);
+	let deviceLoading = $state(false);
+	let deviceError = $state('');
+	let newDeviceName = $state('');
+	let addDeviceBusy = $state(false);
+	let busyDevice = $state(''); // device id mid-provision/remove
+	let deviceNote = $state<Record<string, string>>({});
 
 	async function loadUsers() {
 		loading = true;
@@ -69,6 +79,63 @@
 		}
 		deleteBusy = false;
 	}
+
+	// ───────── Devices ─────────
+	async function openDevices(user: User) {
+		devicesFor = user;
+		deviceList = [];
+		deviceError = '';
+		deviceNote = {};
+		newDeviceName = '';
+		deviceLoading = true;
+		try {
+			deviceList = await api.get<Device[]>(`/api/users/${user.id}/devices`);
+		} catch (e) {
+			deviceError = errorMessage(e);
+		}
+		deviceLoading = false;
+	}
+
+	async function addDevice() {
+		if (!devicesFor || newDeviceName === '') return;
+		addDeviceBusy = true;
+		deviceError = '';
+		try {
+			const created = await api.post<Device>(`/api/users/${devicesFor.id}/devices`, {
+				name: newDeviceName
+			});
+			deviceList = [...deviceList, created];
+			newDeviceName = '';
+		} catch (e) {
+			deviceError = errorMessage(e);
+		}
+		addDeviceBusy = false;
+	}
+
+	async function provisionDevice(d: Device) {
+		busyDevice = d.id;
+		try {
+			const res = await api.post<ProvisionResult>(`/api/devices/${d.id}/provision`);
+			deviceNote = {
+				...deviceNote,
+				[d.id]: `provisioned — ${res.tunnel_ip}, ${res.peer_count} node(s), profile rev ${res.profile_revision}`
+			};
+		} catch (e) {
+			deviceNote = { ...deviceNote, [d.id]: errorMessage(e) };
+		}
+		busyDevice = '';
+	}
+
+	async function removeDevice(d: Device) {
+		busyDevice = d.id;
+		try {
+			await api.del(`/api/devices/${d.id}`);
+			deviceList = deviceList.filter((x) => x.id !== d.id);
+		} catch (e) {
+			deviceNote = { ...deviceNote, [d.id]: errorMessage(e) };
+		}
+		busyDevice = '';
+	}
 </script>
 
 <svelte:head><title>Users — helm</title></svelte:head>
@@ -76,7 +143,7 @@
 <div class="flex items-end justify-between">
 	<div>
 		<h1 class="section-title">Users</h1>
-		<p class="section-subtitle">end-user accounts. Each enrols its own encryption key.</p>
+		<p class="section-subtitle">end-user accounts, their devices, and provisioning.</p>
 	</div>
 	<button class="btn btn-primary" onclick={openAdd}>Add user</button>
 </div>
@@ -105,7 +172,8 @@
 								<span class="dot"></span>{u.status}
 							</span>
 						</td>
-						<td class="text-right">
+						<td class="text-right whitespace-nowrap">
+							<button class="btn btn-text btn-sm" onclick={() => openDevices(u)}>Devices</button>
 							<button
 								class="btn btn-text btn-sm"
 								style="color: var(--c-danger)"
@@ -157,6 +225,63 @@
 			<button class="btn btn-danger" onclick={confirmDelete} disabled={deleteBusy}>
 				{deleteBusy ? 'Removing…' : 'Remove'}
 			</button>
+		</div>
+	</Modal>
+{/if}
+
+{#if devicesFor}
+	<Modal title="Devices — {devicesFor.email}" onclose={() => (devicesFor = null)}>
+		{#if deviceLoading}
+			<p class="text-sm text-ink-3">Loading devices…</p>
+		{:else}
+			{#if deviceList.length === 0}
+				<p class="text-sm text-ink-3">No devices yet.</p>
+			{:else}
+				<ul class="flex flex-col gap-3">
+					{#each deviceList as d (d.id)}
+						<li class="rounded-md border border-line p-3">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-sm font-medium text-ink">{d.name}</span>
+								<span class="flex gap-1">
+									<button
+										class="btn btn-text btn-sm"
+										disabled={busyDevice === d.id}
+										onclick={() => provisionDevice(d)}>Provision</button
+									>
+									<button
+										class="btn btn-text btn-sm"
+										style="color: var(--c-danger)"
+										disabled={busyDevice === d.id}
+										onclick={() => removeDevice(d)}>Remove</button
+									>
+								</span>
+							</div>
+							{#if deviceNote[d.id]}
+								<p class="mt-1 text-xs text-ink-3">{deviceNote[d.id]}</p>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
+			<div class="mt-4 flex gap-2">
+				<input
+					class="input"
+					placeholder="New device name"
+					bind:value={newDeviceName}
+					dir="auto"
+				/>
+				<button
+					class="btn btn-secondary"
+					disabled={addDeviceBusy || newDeviceName === ''}
+					onclick={addDevice}>Add</button
+				>
+			</div>
+			{#if deviceError}<p class="field-error" role="alert">{deviceError}</p>{/if}
+		{/if}
+
+		<div class="mt-6 flex justify-end">
+			<button class="btn btn-secondary" onclick={() => (devicesFor = null)}>Close</button>
 		</div>
 	</Modal>
 {/if}

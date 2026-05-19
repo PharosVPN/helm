@@ -12,6 +12,8 @@ import (
 	"github.com/PharosVPN/helm/internal/config"
 	"github.com/PharosVPN/helm/internal/fleet"
 	"github.com/PharosVPN/helm/internal/live"
+	"github.com/PharosVPN/helm/internal/profile"
+	"github.com/PharosVPN/helm/internal/provision"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +64,17 @@ func newServeCmd() *cobra.Command {
 				}(n)
 			}
 
-			srv := api.NewServer(cfg.UI.Listen, conn, hub)
+			provOpts := provision.Options{
+				VPNSubnet: cfg.Fleet.VPNSubnet,
+				PortMin:   cfg.Fleet.EndpointPortMin,
+				PortMax:   cfg.Fleet.EndpointPortMax,
+				Rotation: profile.RotationPolicy{
+					Enabled:         cfg.Fleet.Rotation.Enabled,
+					IntervalSeconds: cfg.Fleet.Rotation.IntervalSeconds,
+					JitterSeconds:   cfg.Fleet.Rotation.JitterSeconds,
+				},
+			}
+			srv := api.NewServer(cfg.UI.Listen, conn, hub, provOpts)
 			fmt.Printf("helm admin server — http://%s, watching %d node(s)\n", cfg.UI.Listen, watched)
 			fmt.Printf("  api:     http://%s/api\n", cfg.UI.Listen)
 			fmt.Printf("  events:  ws://%s/ws/events\n", cfg.UI.Listen)
