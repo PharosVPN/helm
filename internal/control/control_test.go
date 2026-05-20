@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"reflect"
+
 	"github.com/PharosVPN/helm/internal/control"
 	"github.com/PharosVPN/helm/internal/db"
 	buoyv1 "github.com/PharosVPN/helm/internal/gen/pharos/buoy/v1"
@@ -23,7 +25,100 @@ import (
 	"github.com/PharosVPN/helm/internal/wg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 )
+
+// recordingNode is a minimal NodeControl server that captures the last
+// PushConfig request so a test can assert on the encoded payload.
+type recordingNode struct {
+	buoyv1.UnimplementedNodeControlServer
+	lastPush *buoyv1.PushConfigRequest
+}
+
+func (n *recordingNode) PushConfig(_ context.Context, req *buoyv1.PushConfigRequest) (*buoyv1.PushConfigResponse, error) {
+	n.lastPush = req
+	return &buoyv1.PushConfigResponse{AppliedRevision: req.GetRevision(), Reloaded: true}, nil
+}
+
+// TestPushAmneziaWGConfigRoundTrip verifies the encoding contract for
+// PushConfigRequest.config with PROTOCOL_AMNEZIAWG: typed AmneziaWGConfig
+// proto bytes carrying the peer set verbatim, no obfuscation, no surprises.
+func TestPushAmneziaWGConfigRoundTrip(t *testing.T) {
+	rec := &recordingNode{}
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	buoyv1.RegisterNodeControlServer(srv, rec)
+	go srv.Serve(lis) //nolint:errcheck // stops on Stop
+	t.Cleanup(srv.Stop)
+
+	cc, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+	t.Cleanup(func() { cc.Close() })
+	client := control.NewClientFromConn(cc)
+
+	peers := []*buoyv1.Peer{
+		{
+			Id:           "pee_1",
+			Protocol:     buoyv1.Protocol_PROTOCOL_AMNEZIAWG,
+			PublicKey:    "cGVlci1vbmU=",
+			AllowedIps:   []string{"10.86.0.7/32"},
+			PresharedKey: "cHNrLW9uZQ==",
+			Endpoints:    []string{"203.0.113.7:443"},
+		},
+		{
+			Id:           "pee_2",
+			Protocol:     buoyv1.Protocol_PROTOCOL_AMNEZIAWG,
+			PublicKey:    "cGVlci10d28=",
+			AllowedIps:   []string{"10.86.0.8/32"},
+			PresharedKey: "cHNrLXR3bw==",
+			Endpoints:    []string{"203.0.113.8:443"},
+		},
+	}
+	resp, err := client.PushAmneziaWGConfig(context.Background(), 17, peers)
+	if err != nil {
+		t.Fatalf("PushAmneziaWGConfig: %v", err)
+	}
+	if resp.GetAppliedRevision() != 17 {
+		t.Errorf("applied revision: got %d want 17", resp.GetAppliedRevision())
+	}
+
+	if rec.lastPush == nil {
+		t.Fatal("server saw no PushConfig request")
+	}
+	if rec.lastPush.GetProtocol() != buoyv1.Protocol_PROTOCOL_AMNEZIAWG {
+		t.Errorf("protocol: got %v", rec.lastPush.GetProtocol())
+	}
+	if rec.lastPush.GetRevision() != 17 {
+		t.Errorf("revision: got %d", rec.lastPush.GetRevision())
+	}
+
+	// The wire bytes must decode as the typed message — that's the contract.
+	var decoded buoyv1.AmneziaWGConfig
+	if err := proto.Unmarshal(rec.lastPush.GetConfig(), &decoded); err != nil {
+		t.Fatalf("unmarshal AmneziaWGConfig: %v", err)
+	}
+	if len(decoded.GetPeers()) != len(peers) {
+		t.Fatalf("decoded peer count: got %d want %d", len(decoded.GetPeers()), len(peers))
+	}
+	for i, p := range peers {
+		got := decoded.GetPeers()[i]
+		if got.GetId() != p.GetId() ||
+			got.GetPublicKey() != p.GetPublicKey() ||
+			got.GetPresharedKey() != p.GetPresharedKey() ||
+			!reflect.DeepEqual(got.GetAllowedIps(), p.GetAllowedIps()) ||
+			!reflect.DeepEqual(got.GetEndpoints(), p.GetEndpoints()) {
+			t.Errorf("peer %d not round-tripped: got %+v want %+v", i, got, p)
+		}
+	}
+}
 
 func TestAmneziaWGFromStatus(t *testing.T) {
 	// A status with no AmneziaWG block — node has not configured its data

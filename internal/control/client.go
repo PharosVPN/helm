@@ -5,10 +5,12 @@ package control
 
 import (
 	"context"
+	"fmt"
 
 	buoyv1 "github.com/PharosVPN/helm/internal/gen/pharos/buoy/v1"
 	"github.com/PharosVPN/helm/internal/wg"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // Client is helm's control connection to one buoy node. It is safe for
@@ -20,6 +22,13 @@ type Client struct {
 
 // Close releases the connection.
 func (c *Client) Close() error { return c.cc.Close() }
+
+// NewClientFromConn wraps an existing *grpc.ClientConn in a control Client.
+// Dialer.Dial is the production path; this exists for tests that need to drive
+// the Client over an in-memory transport.
+func NewClientFromConn(cc *grpc.ClientConn) *Client {
+	return &Client{cc: cc, rpc: buoyv1.NewNodeControlClient(cc)}
+}
 
 // Status reports node and per-protocol service health.
 func (c *Client) Status(ctx context.Context) (*buoyv1.GetStatusResponse, error) {
@@ -51,7 +60,21 @@ func (c *Client) Metrics(ctx context.Context) (*buoyv1.GetMetricsResponse, error
 	return c.rpc.GetMetrics(ctx, &buoyv1.GetMetricsRequest{})
 }
 
-// PushConfig replaces the data-plane config for one protocol.
+// PushAmneziaWGConfig encodes a full AmneziaWG peer set and replaces the
+// node's data-plane config in one call. helm sends peers only — node-level
+// obfuscation is buoy's domain (decision-14 follow-up) and stays out of the
+// payload.
+func (c *Client) PushAmneziaWGConfig(ctx context.Context, revision int64, peers []*buoyv1.Peer) (*buoyv1.PushConfigResponse, error) {
+	cfg, err := proto.Marshal(&buoyv1.AmneziaWGConfig{Peers: peers})
+	if err != nil {
+		return nil, fmt.Errorf("control: marshal amneziawg config: %w", err)
+	}
+	return c.PushConfig(ctx, buoyv1.Protocol_PROTOCOL_AMNEZIAWG, revision, cfg)
+}
+
+// PushConfig replaces the data-plane config for one protocol. Callers usually
+// want PushAmneziaWGConfig (or the future XRay equivalent), which handles the
+// encoding — this is the raw path for forwarders and tests.
 func (c *Client) PushConfig(ctx context.Context, protocol buoyv1.Protocol, revision int64, config []byte) (*buoyv1.PushConfigResponse, error) {
 	return c.rpc.PushConfig(ctx, &buoyv1.PushConfigRequest{
 		Protocol: protocol,
