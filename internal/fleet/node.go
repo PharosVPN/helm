@@ -58,14 +58,17 @@ type Node struct {
 	Masquerade bool
 	Isolation  bool
 	Status     string
-	Version    int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// ConfigRevision is the last PushConfig revision helm assigned to this
+	// node (B2 — buoy rejects stale revisions with FailedPrecondition).
+	ConfigRevision int64
+	Version        int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 const nodeColumns = `id, name, region, public_ip, endpoint_ips, control_addr, cloud_id,
 	ssh_host, ssh_user, ssh_port, ssh_host_key, agent_version, wg_public_key,
-	wg_obfuscation, forwarding, masquerade, isolation,
+	wg_obfuscation, forwarding, masquerade, isolation, config_revision,
 	status, version, created_at, updated_at`
 
 // marshalObfuscation encodes an obfuscation set for the wg_obfuscation column.
@@ -132,11 +135,11 @@ func CreateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO nodes (`+nodeColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Region, n.PublicIP, joinIPs(n.EndpointIPs), n.ControlAddr, n.CloudID,
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		marshalObfuscation(n.Obfuscation), n.Forwarding, n.Masquerade, n.Isolation,
-		n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
+		n.ConfigRevision, n.Status, n.Version, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		return Node{}, fmt.Errorf("create node: %w", err)
 	}
@@ -189,6 +192,8 @@ func UpdateNode(ctx context.Context, db *sql.DB, n Node) (Node, error) {
 		n.SSHHost, n.SSHUser, n.SSHPort, n.SSHHostKey, n.AgentVersion, n.WGPublicKey,
 		marshalObfuscation(n.Obfuscation), n.Forwarding, n.Masquerade, n.Isolation,
 		n.Status, now, n.ID, n.Version)
+	// NOTE: ConfigRevision is updated only via NextNodeConfigRevision; an
+	// UpdateNode caller is reconciling node metadata, not pushing config.
 	if err != nil {
 		return Node{}, fmt.Errorf("update node: %w", err)
 	}
@@ -222,6 +227,24 @@ func DeleteNode(ctx context.Context, db *sql.DB, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// NextNodeConfigRevision atomically bumps and returns the next PushConfig
+// revision for the node — helm's monotonic counter that buoy enforces via
+// FailedPrecondition on stale values (B2). A missing node yields ErrNotFound.
+func NextNodeConfigRevision(ctx context.Context, db *sql.DB, nodeID string) (int64, error) {
+	var rev int64
+	err := db.QueryRowContext(ctx,
+		`UPDATE nodes SET config_revision = config_revision + 1
+		 WHERE id = ?
+		 RETURNING config_revision`, nodeID).Scan(&rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("next config revision: %w", err)
+	}
+	return rev, nil
 }
 
 // SetNodeAmneziaWG records the AmneziaWG server identity buoy reported for a
@@ -263,7 +286,7 @@ func scanNode(s rowScanner) (Node, error) {
 	err := s.Scan(&n.ID, &n.Name, &n.Region, &n.PublicIP, &endpointIPs, &n.ControlAddr,
 		&n.CloudID, &n.SSHHost, &n.SSHUser, &n.SSHPort, &n.SSHHostKey,
 		&n.AgentVersion, &n.WGPublicKey, &obfuscation, &n.Forwarding, &n.Masquerade, &n.Isolation,
-		&n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+		&n.ConfigRevision, &n.Status, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Node{}, err
 	}

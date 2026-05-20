@@ -15,7 +15,9 @@ import (
 	"github.com/PharosVPN/helm/internal/control"
 	"github.com/PharosVPN/helm/internal/deploy"
 	"github.com/PharosVPN/helm/internal/fleet"
+	buoyv1 "github.com/PharosVPN/helm/internal/gen/pharos/buoy/v1"
 	"github.com/PharosVPN/helm/internal/pki"
+	"github.com/PharosVPN/helm/internal/profile"
 	"github.com/PharosVPN/helm/internal/wg"
 	"github.com/spf13/cobra"
 )
@@ -41,6 +43,7 @@ func newNodesCmd() *cobra.Command {
 		newNodesAddCmd(),
 		newNodesListCmd(),
 		newNodesStatusCmd(),
+		newNodesPushCmd(),
 		newNodesUpdateCmd(),
 		newNodesStartCmd(),
 		newNodesStopCmd(),
@@ -243,6 +246,90 @@ func newNodesListCmd() *cobra.Command {
 					n.ID, n.Name, n.Region, n.Status, dash(n.SSHHost), dash(n.AgentVersion))
 			}
 			return tw.Flush()
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
+	return cmd
+}
+
+// toBuoyAmneziaWGPeers converts helm's fleet.Peer rows for one node into the
+// proto Peer messages PushAmneziaWGConfig expects. Non-AmneziaWG peers are
+// skipped — XRay lands in B3 with its own encoder.
+func toBuoyAmneziaWGPeers(peers []fleet.Peer) []*buoyv1.Peer {
+	out := make([]*buoyv1.Peer, 0, len(peers))
+	for _, p := range peers {
+		if p.Protocol != profile.ProtocolAmneziaWG {
+			continue
+		}
+		out = append(out, &buoyv1.Peer{
+			Id:           p.ID,
+			Protocol:     buoyv1.Protocol_PROTOCOL_AMNEZIAWG,
+			PublicKey:    p.PublicKey,
+			AllowedIps:   []string{p.AllowedIP},
+			PresharedKey: p.PresharedKey,
+		})
+	}
+	return out
+}
+
+func newNodesPushCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "push <node-id>",
+		Short: "Push the current peer set to a node's AmneziaWG data plane",
+		Long: "Reconcile a node by pushing helm's current AmneziaWG peer set\n" +
+			"over the control channel (PushConfig — full-replace). buoy bumps\n" +
+			"awg0 in place, no tunnel drops. helm assigns a monotonic revision\n" +
+			"per node; buoy rejects stale revisions with FailedPrecondition.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, conn, err := openState(cfgPath)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			node, err := fleet.GetNode(ctx, conn, args[0])
+			if err != nil {
+				return err
+			}
+			if node.ControlAddr == "" {
+				return fmt.Errorf("node %s has no control address", node.ID)
+			}
+
+			peers, err := fleet.ListPeersByNode(ctx, conn, node.ID)
+			if err != nil {
+				return err
+			}
+			amneziaPeers := toBuoyAmneziaWGPeers(peers)
+
+			dialer, err := newControlDialer(ctx, conn)
+			if err != nil {
+				return err
+			}
+			client, err := dialer.Dial(node.ControlAddr)
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			revision, err := fleet.NextNodeConfigRevision(ctx, conn, node.ID)
+			if err != nil {
+				return err
+			}
+
+			rpcCtx, cancel := context.WithTimeout(ctx, controlRPCTimeout)
+			defer cancel()
+			resp, err := client.PushAmneziaWGConfig(rpcCtx, revision, amneziaPeers)
+			if err != nil {
+				return fmt.Errorf("control %s: %w", node.ControlAddr, err)
+			}
+
+			fmt.Printf("node %s — pushed %d AmneziaWG peer(s)\n", node.Name, len(amneziaPeers))
+			fmt.Printf("  revision  %d (applied %d)\n", revision, resp.GetAppliedRevision())
+			fmt.Printf("  reloaded  %t\n", resp.GetReloaded())
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
