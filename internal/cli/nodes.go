@@ -44,6 +44,7 @@ func newNodesCmd() *cobra.Command {
 		newNodesListCmd(),
 		newNodesStatusCmd(),
 		newNodesPushCmd(),
+		newNodesPushPolicyCmd(),
 		newNodesUpdateCmd(),
 		newNodesStartCmd(),
 		newNodesStopCmd(),
@@ -329,6 +330,60 @@ func newNodesPushCmd() *cobra.Command {
 			fmt.Printf("node %s — pushed %d AmneziaWG peer(s)\n", node.Name, len(amneziaPeers))
 			fmt.Printf("  revision  %d (applied %d)\n", revision, resp.GetAppliedRevision())
 			fmt.Printf("  reloaded  %t\n", resp.GetReloaded())
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", config.DefaultPath, "path to the config file")
+	return cmd
+}
+
+func newNodesPushPolicyCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "push-policy <node-id>",
+		Short: "Push the node's network policy over the control channel",
+		Long: "Apply the node's stored forwarding / masquerade / isolation\n" +
+			"policy (DESIGN §3, decision 16) to its data plane via\n" +
+			"SetNetworkConfig. Run this after editing policy in the admin UI\n" +
+			"or `helm nodes update` to make the new rules take effect.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			_, conn, err := openState(cfgPath)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			node, err := fleet.GetNode(ctx, conn, args[0])
+			if err != nil {
+				return err
+			}
+			if node.ControlAddr == "" {
+				return fmt.Errorf("node %s has no control address", node.ID)
+			}
+
+			dialer, err := newControlDialer(ctx, conn)
+			if err != nil {
+				return err
+			}
+			client, err := dialer.Dial(node.ControlAddr)
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			rpcCtx, cancel := context.WithTimeout(ctx, controlRPCTimeout)
+			defer cancel()
+			resp, err := client.SetNetworkConfig(rpcCtx, node.Forwarding, node.Masquerade, node.Isolation)
+			if err != nil {
+				return fmt.Errorf("control %s: %w", node.ControlAddr, err)
+			}
+
+			fmt.Printf("node %s — network policy pushed\n", node.Name)
+			fmt.Printf("  forwarding %t  masquerade %t  isolation %t\n",
+				node.Forwarding, node.Masquerade, node.Isolation)
+			fmt.Printf("  applied    %t\n", resp.GetApplied())
 			return nil
 		},
 	}
