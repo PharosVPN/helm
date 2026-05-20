@@ -51,6 +51,41 @@ func TestNodeCRUD(t *testing.T) {
 	}
 }
 
+func TestNextNodeConfigRevision(t *testing.T) {
+	conn := newDB(t)
+	ctx := context.Background()
+
+	created, err := fleet.CreateNode(ctx, conn, fleet.Node{Name: "ams-1", Region: "eu"})
+	if err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if created.ConfigRevision != 0 {
+		t.Fatalf("fresh node config_revision: got %d want 0", created.ConfigRevision)
+	}
+
+	for want := int64(1); want <= 3; want++ {
+		got, err := fleet.NextNodeConfigRevision(ctx, conn, created.ID)
+		if err != nil {
+			t.Fatalf("NextNodeConfigRevision: %v", err)
+		}
+		if got != want {
+			t.Errorf("revision: got %d want %d", got, want)
+		}
+	}
+
+	refreshed, err := fleet.GetNode(ctx, conn, created.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if refreshed.ConfigRevision != 3 {
+		t.Errorf("persisted revision: got %d want 3", refreshed.ConfigRevision)
+	}
+
+	if _, err := fleet.NextNodeConfigRevision(ctx, conn, "nod-missing"); !errors.Is(err, fleet.ErrNotFound) {
+		t.Fatalf("missing node: got %v want ErrNotFound", err)
+	}
+}
+
 func TestSetNodeAmneziaWG(t *testing.T) {
 	conn := newDB(t)
 	ctx := context.Background()
